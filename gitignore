@@ -1,0 +1,83 @@
+# ============================================
+# .gitignore - Práctica Big Data 2026 Parte II
+# ============================================
+
+# --- Datasets y modelos pesados ---
+# (los gestionaremos vía MinIO/Iceberg, NO vía git)
+data/*.csv
+data/*.csv.bz2
+data/*.json
+data/*.jsonl
+data/*.jsonl.bz2
+data/*.parquet
+models/
+!models/.gitkeep
+*.bin
+
+# --- Logs y outputs ---
+*.log
+logs/
+spark-warehouse/
+metastore_db/
+derby.log
+
+# --- Caches y artefactos de build ---
+# Scala / sbt
+target/
+project/target/
+project/project/
+.bsp/
+.metals/
+.bloop/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.venv/
+venv/
+env/
+.python-version
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# --- Credenciales y secretos ---
+*.pem
+*.key
+*-key.json
+.env
+.env.local
+gcp-key.json
+service-account.json
+
+# --- Docker ---
+.docker/
+
+# --- Kubernetes ---
+*.kubeconfig
+secrets/
+
+# --- Airflow ---
+airflow.db
+airflow-webserver.pid
+airflow.cfg
+unittests.cfg
+webserver_config.py
+
+# --- MLflow ---
+mlruns/
+mlartifacts/
+
+# --- Sistema operativo ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
