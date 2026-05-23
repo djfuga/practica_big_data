@@ -81,3 +81,6 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+
+# Repositorio original como referencia local (no se commitea)
+source_original/
