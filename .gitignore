@@ -84,3 +84,6 @@ $RECYCLE.BIN/
 
 # Repositorio original como referencia local (no se commitea)
 source_original/
+
+# Backups temporales
+*.bak
