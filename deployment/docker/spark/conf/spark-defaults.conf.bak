@@ -1,0 +1,40 @@
+# =============================================================
+# Configuracion por defecto de Spark - Practica Big Data 2026
+# =============================================================
+
+# -------------------------------------------------------------
+# Iceberg: extension SQL y catalogo
+# -------------------------------------------------------------
+# Habilita la sintaxis Iceberg (MERGE INTO, time travel, etc.)
+spark.sql.extensions                                org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+
+# Catalogo 'lakehouse' de tipo Hadoop (almacenado en MinIO via s3a)
+# Elegimos Hadoop catalog por simplicidad (sin servicio REST extra)
+spark.sql.catalog.lakehouse                         org.apache.iceberg.spark.SparkCatalog
+spark.sql.catalog.lakehouse.type                    hadoop
+spark.sql.catalog.lakehouse.warehouse               s3a://lakehouse/warehouse
+spark.sql.catalog.lakehouse.io-impl                 org.apache.iceberg.aws.s3.S3FileIO
+spark.sql.catalog.lakehouse.s3.endpoint             http://minio:9000
+spark.sql.catalog.lakehouse.s3.path-style-access    true
+
+# Catalogo por defecto
+spark.sql.defaultCatalog                            lakehouse
+
+# -------------------------------------------------------------
+# Acceso S3A a MinIO (lo usa el training PySpark para parquet crudo)
+# -------------------------------------------------------------
+spark.hadoop.fs.s3a.endpoint                        http://minio:9000
+spark.hadoop.fs.s3a.access.key                      bigdata
+spark.hadoop.fs.s3a.secret.key                      bigdata-secret-2026
+spark.hadoop.fs.s3a.path.style.access               true
+spark.hadoop.fs.s3a.impl                            org.apache.hadoop.fs.s3a.S3AFileSystem
+spark.hadoop.fs.s3a.connection.ssl.enabled          false
+# Evita que S3A intente crear buckets o comprobar la region de AWS real
+spark.hadoop.fs.s3a.aws.credentials.provider        org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider
+
+# -------------------------------------------------------------
+# Tuning para entorno local con RAM limitada (WSL2)
+# -------------------------------------------------------------
+spark.sql.shuffle.partitions                        4
+spark.driver.memory                                 1g
+spark.executor.memory                               1g

@@ -71,3 +71,25 @@
 | GKE (Fase 3) | Autopilot |
 | Artifact Registry | Docker repo `europe-southwest1` |
 | Región GCP | `europe-southwest1` (Madrid) — más cercano para baja latencia |
+
+## ⚠️ ACTUALIZACIÓN (decisión de arquitectura Iceberg)
+
+Tras varias iteraciones, el catálogo Iceberg **Hadoop directo sobre MinIO** dio problemas
+irresolubles de dependencias AWS SDK (ClassNotFoundException ObjectTransfer, conflictos v1/v2).
+
+**Solución adoptada: Iceberg REST Catalog**
+- Servicio: `apache/iceberg-rest-fixture:1.10.1` (mismo número que el runtime Iceberg)
+- El catálogo REST gestiona metadata y acceso S3 vía S3FileIO (AWS SDK v2)
+- Spark usa `type=rest`, `uri=http://iceberg-rest:8181`
+- Imagen Spark: SIN hadoop-aws, SOLO iceberg-aws-bundle (SDK v2 puro)
+- Config crítica: `spark.sql.catalog.lakehouse.client.region=us-east-1` (el SDK v2 exige región)
+
+| Componente | Valor final |
+|---|---|
+| Catálogo Iceberg | REST (`apache/iceberg-rest-fixture:1.10.1`) |
+| io-impl | `org.apache.iceberg.aws.s3.S3FileIO` |
+| Región S3 (obligatoria SDK v2) | us-east-1 |
+| hadoop-aws | ❌ ELIMINADO (causaba conflictos) |
+| aws-java-sdk-bundle v1 | ❌ ELIMINADO |
+
+✅ VALIDADO: Iceberg 1.10.1 sobre Spark 4.1.1 escribe/lee tablas en MinIO en modo distribuido.
