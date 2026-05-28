@@ -184,6 +184,7 @@ services:
       - ./spark/tests:/opt/spark/tests:ro
       - ./spark/jobs:/opt/spark/jobs:ro
       - ../../data:/opt/spark/data:ro
+      - ../../models:/opt/spark/models
     command: >
       /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
       --host spark-master --port 7077 --webui-port 8080
@@ -212,6 +213,7 @@ services:
     volumes:
       - ./spark/jobs:/opt/spark/jobs:ro
       - ../../data:/opt/spark/data:ro
+      - ../../models:/opt/spark/models
     ports:
       - "${SPARK_WORKER_UI_PORT:-8081}:8081"   # Web UI del worker
     environment:
