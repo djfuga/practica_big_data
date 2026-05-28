@@ -202,7 +202,7 @@ Seguimiento de los criterios de evaluación de la Parte II:
 
 | Criterio | Puntos | Estado |
 |---|---|---|
-| Data Lakehouse con Iceberg (MinIO) | 1 obl. | EN PROGRESO - infra lista, falta cargar dataset |
+| Data Lakehouse con Iceberg (MinIO) | 1 obl. | ✅ COMPLETO - tabla flights.training_data (457K registros) |
 | Distancias en Cassandra | 1 obl. | PENDIENTE |
 | Predicciones en Kafka + WebSockets + Cassandra | 1 obl. | PENDIENTE |
 | Training lee/escribe en Lakehouse | 1 obl. | PENDIENTE |
