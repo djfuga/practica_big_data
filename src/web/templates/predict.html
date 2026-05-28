@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Prediccion de Retrasos de Vuelos</title>
+  <style>
+    body { font-family: -apple-system, Arial, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 16px; color: #222; }
+    h1 { font-size: 1.5rem; }
+    .subtitle { color: #666; margin-bottom: 24px; }
+    form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; background: #f7f7f9; padding: 16px; border-radius: 8px; }
+    .field { display: flex; flex-direction: column; }
+    .field label { font-size: 0.75rem; color: #555; margin-bottom: 4px; }
+    .field input { padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px; width: 90px; }
+    button { padding: 8px 18px; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; height: 34px; }
+    button:hover { background: #1d4ed8; }
+    #result-box { margin-top: 24px; padding: 16px; border-radius: 8px; background: #f0f4ff; min-height: 24px; }
+    .status { font-weight: bold; }
+    .delay-0 { color: #16a34a; }
+    .delay-1 { color: #ca8a04; }
+    .delay-2 { color: #ea580c; }
+    .delay-3 { color: #dc2626; }
+    .waiting { color: #888; font-style: italic; }
+    .conn { font-size: 0.75rem; color: #999; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>Prediccion de Retrasos de Vuelos</h1>
+  <p class="subtitle">Practica Big Data 2026 - Spark Streaming + Kafka + WebSockets + Cassandra</p>
+
+  <form id="predict-form">
+    {% for item in form_config %}
+    <div class="field">
+      <label for="{{ item['field'] }}">{{ item['label'] }}</label>
+      <input name="{{ item['field'] }}" id="{{ item['field'] }}" value="{{ item['value'] }}">
+    </div>
+    {% endfor %}
+    <button type="submit">Predecir</button>
+  </form>
+
+  <div id="result-box">
+    <span class="waiting">Introduce los datos del vuelo y pulsa Predecir.</span>
+  </div>
+  <div class="conn" id="conn-status">WebSocket: conectando...</div>
+
+  <!-- Socket.IO cliente desde CDN -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <script>
+    // Conexion WebSocket
+    const socket = io();
+    let currentUUID = null;
+
+    socket.on("connect", () => {
+      document.getElementById("conn-status").textContent = "WebSocket: conectado";
+    });
+    socket.on("disconnect", () => {
+      document.getElementById("conn-status").textContent = "WebSocket: desconectado";
+    });
+
+    // Mapeo de la prediccion (bucket) a texto legible
+    const delayLabels = {
+      0: "Adelantado / muy puntual",
+      1: "A tiempo",
+      2: "Retraso moderado",
+      3: "Retraso importante"
+    };
+
+    // Recibir predicciones por WebSocket
+    socket.on("prediction", (data) => {
+      // Solo mostrar si corresponde a NUESTRA peticion
+      if (data.UUID !== currentUUID) return;
+
+      const box = document.getElementById("result-box");
+      const pred = data.Prediction !== undefined ? data.Prediction : data.prediction;
+      const label = delayLabels[pred] || ("Clase " + pred);
+      box.innerHTML = '<span class="status delay-' + pred + '">Resultado: ' + label +
+                      ' (clase ' + pred + ')</span>';
+    });
+
+    // Enviar el formulario
+    document.getElementById("predict-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const box = document.getElementById("result-box");
+      box.innerHTML = '<span class="waiting">Procesando prediccion...</span>';
+
+      const formData = new FormData(e.target);
+      const resp = await fetch("/flights/delays/predict/classify_realtime", {
+        method: "POST",
+        body: formData
+      });
+      const json = await resp.json();
+      currentUUID = json.id;
+      console.log("Peticion enviada, UUID:", currentUUID);
+    });
+  </script>
+</body>
+</html>

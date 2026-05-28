@@ -263,3 +263,38 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+
+  # ===========================================================
+  # Flask + SocketIO (web del usuario)
+  # Lee distancias de Cassandra (punto obl. 2)
+  # Recibe predicciones por Kafka y las emite por WebSocket (punto obl. 3)
+  # ===========================================================
+  web:
+    build:
+      context: ../../src/web
+      dockerfile: Dockerfile
+    image: bigdata/web:1.0
+    container_name: bigdata-web
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+    depends_on:
+      kafka:
+        condition: service_healthy
+      cassandra:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-5001}:5000"
+    environment:
+      KAFKA_BROKER: kafka:9092
+      REQUEST_TOPIC: flight-delay-request
+      RESPONSE_TOPIC: flight-delay-classification-response
+      CASSANDRA_HOST: cassandra
+      CASSANDRA_PORT: "9042"
+      CASSANDRA_KEYSPACE: flight_db
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
