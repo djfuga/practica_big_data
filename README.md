@@ -205,7 +205,7 @@ Seguimiento de los criterios de evaluación de la Parte II:
 | Data Lakehouse con Iceberg (MinIO) | 1 obl. | ✅ COMPLETO - tabla flights.training_data (457K registros) |
 | Distancias en Cassandra | 1 obl. | PENDIENTE |
 | Predicciones en Kafka + WebSockets + Cassandra | 1 obl. | PENDIENTE |
-| Training lee/escribe en Lakehouse | 1 obl. | PENDIENTE |
+| Training lee/escribe en Lakehouse | 1 obl. | ✅ COMPLETO - lee Iceberg, modelos en MinIO |
 | Docker + docker-compose completo | 1 obl. | EN PROGRESO - 6/9 servicios listos |
 | Despliegue en Kubernetes | 3 | PENDIENTE |
 | Airflow + MLflow | 1 | PENDIENTE |
