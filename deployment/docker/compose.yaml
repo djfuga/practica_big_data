@@ -25,6 +25,8 @@ networks:
 volumes:
   minio-data:
     name: bigdata-minio-data
+  kafka-data:
+    name: bigdata-kafka-data
 
 services:
 
@@ -39,31 +41,23 @@ services:
     networks:
       - bigdata-net
     ports:
-      # 9000: API S3 (la que usan Spark, boto3, mc)
       - "${MINIO_API_PORT:-9000}:9000"
-      # 9001: Web console (UI grafica)
       - "${MINIO_CONSOLE_PORT:-9001}:9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       MINIO_REGION: ${MINIO_REGION:-us-east-1}
-      # MinIO usa por defecto el navegador del puerto 9001
       MINIO_BROWSER_REDIRECT_URL: http://localhost:${MINIO_CONSOLE_PORT:-9001}
     volumes:
       - minio-data:/data
     command: server /data --console-address ":9001"
     healthcheck:
-      # /minio/health/live es el endpoint nativo de MinIO
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
 
-  # ===========================================================
-  # minio-init - Job de un solo uso: crea buckets y usuarios
-  # Se ejecuta DESPUES de que MinIO este healthy y termina
-  # ===========================================================
   minio-init:
     image: minio/mc:RELEASE.2025-04-03T17-07-56Z
     container_name: bigdata-minio-init
@@ -80,5 +74,75 @@ services:
       MINIO_LAKEHOUSE_BUCKET: ${MINIO_LAKEHOUSE_BUCKET}
     volumes:
       - ./bootstrap/minio-init.sh:/init.sh:ro
-    # /bin/sh porque mc usa Alpine y no tiene bash
     entrypoint: ["/bin/sh", "/init.sh"]
+
+  # ===========================================================
+  # Kafka 4.2.0 (KRaft, single-node, dev mode)
+  # Dos listeners:
+  #   - INTERNAL (9092) : para servicios dentro de docker-compose
+  #   - EXTERNAL (9094) : para clientes desde WSL2 / host
+  # ===========================================================
+  kafka:
+    image: apache/kafka:4.2.0
+    container_name: bigdata-kafka
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+    ports:
+      # Listener EXTERNAL expuesto al host
+      - "${KAFKA_EXTERNAL_PORT:-9094}:9094"
+    environment:
+      # --- Modo KRaft (sin Zookeeper) ---
+      # Un solo proceso hace de broker y controller (dev only)
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # --- Listeners ---
+      # PLAINTEXT_INTERNAL: trafico desde otros contenedores (kafka:9092)
+      # CONTROLLER:        comunicacion del quorum interno KRaft (kafka:9093)
+      # PLAINTEXT_EXTERNAL: clientes desde host (localhost:9094)
+      KAFKA_LISTENERS: PLAINTEXT_INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,PLAINTEXT_EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT_INTERNAL://kafka:9092,PLAINTEXT_EXTERNAL://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT,PLAINTEXT_EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT_INTERNAL
+
+      # --- Single-node tuning (NO usar en produccion) ---
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+
+      # --- Cluster ID fijo (lo necesita KRaft para arrancar) ---
+      # Generado con: kafka-storage random-uuid
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+
+      # --- Logs ---
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      # Lista los topics como prueba de vida (incluso si esta vacio)
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # ===========================================================
+  # kafka-init - Job de un solo uso: crea los topics
+  # ===========================================================
+  kafka-init:
+    image: apache/kafka:4.2.0
+    container_name: bigdata-kafka-init
+    networks:
+      - bigdata-net
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./bootstrap/kafka-init.sh:/init.sh:ro
+    entrypoint: ["/bin/sh", "/init.sh"]
+
