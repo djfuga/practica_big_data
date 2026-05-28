@@ -87,3 +87,6 @@ source_original/
 
 # Backups temporales
 *.bak
+
+# Backups temporales
+*.bak
