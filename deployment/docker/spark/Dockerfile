@@ -32,8 +32,9 @@ RUN curl -fSL "${MVN}/org/apache/spark/spark-sql-kafka-0-10_2.13/4.1.1/spark-sql
     curl -fSL "${MVN}/org/apache/commons/commons-pool2/2.12.0/commons-pool2-2.12.0.jar" -o "${JARS}/commons-pool2-2.12.0.jar"
 
 # --- Cassandra Java driver + dependencias minimas ---
-RUN curl -fSL "${MVN}/com/datastax/oss/java-driver-core/4.17.0/java-driver-core-4.17.0.jar" -o "${JARS}/java-driver-core-4.17.0.jar" && \
+RUN curl -fSL "${MVN}/com/datastax/oss/java-driver-core-shaded/4.17.0/java-driver-core-shaded-4.17.0.jar" -o "${JARS}/java-driver-core-shaded-4.17.0.jar" && \
     curl -fSL "${MVN}/com/datastax/oss/java-driver-query-builder/4.17.0/java-driver-query-builder-4.17.0.jar" -o "${JARS}/java-driver-query-builder-4.17.0.jar" && \
+    curl -fSL "${MVN}/com/datastax/oss/java-driver-shaded-guava/25.1-jre-graal-sub-1/java-driver-shaded-guava-25.1-jre-graal-sub-1.jar" -o "${JARS}/java-driver-shaded-guava-25.1-jre-graal-sub-1.jar" && \
     curl -fSL "${MVN}/com/datastax/oss/native-protocol/1.5.1/native-protocol-1.5.1.jar" -o "${JARS}/native-protocol-1.5.1.jar" && \
     curl -fSL "${MVN}/com/typesafe/config/1.4.3/config-1.4.3.jar" -o "${JARS}/config-1.4.3.jar"
 
