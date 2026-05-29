@@ -90,3 +90,9 @@ source_original/
 
 # Backups temporales
 *.bak
+
+# Build de Scala / sbt
+src/flight_prediction/target/
+src/flight_prediction/project/target/
+src/flight_prediction/project/project/
+deployment/docker/spark/jobs/*.jar
