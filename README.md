@@ -214,9 +214,9 @@ practica-bigdata-2026/
 |---|---|---|
 | Data Lakehouse con Iceberg (MinIO) | 1 obl. | COMPLETO |
 | Distancias en Cassandra | 1 obl. | COMPLETO (datos cargados + Flask lee de Cassandra) |
-| Predicciones Kafka + WebSockets + Cassandra | 1 obl. | EN PROGRESO (Flask listo, falta job Scala que produzca al topic response) |
+| Predicciones Kafka + WebSockets + Cassandra | 1 obl. | ✅ COMPLETO - validado end-to-end |
 | Training lee/escribe en Lakehouse | 1 obl. | COMPLETO |
-| Docker + docker-compose completo | 1 obl. | EN PROGRESO (7/8 servicios listos) |
+| Docker + docker-compose completo | 1 obl. | ✅ COMPLETO - 8 servicios + job Scala |
 | Despliegue en Kubernetes | 3 | PENDIENTE |
 | Airflow + MLflow | 1 | PENDIENTE |
 | Despliegue en GCloud | 1 | PENDIENTE |
