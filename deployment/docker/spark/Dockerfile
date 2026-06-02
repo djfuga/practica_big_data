@@ -14,7 +14,8 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
     python3 -m pip install --no-cache-dir \
     numpy==2.1.3 \
     boto3==1.35.99 \
-    iso8601==2.1.0
+    iso8601==2.1.0 \
+    mlflow==2.18.0
 
 # 2. Descarga de JARs desde Maven Central
 ENV MVN=https://repo1.maven.org/maven2

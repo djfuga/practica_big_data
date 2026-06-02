@@ -102,3 +102,8 @@ src/flight_prediction/target/
 src/flight_prediction/project/target/
 src/flight_prediction/project/project/
 deployment/docker/spark/jobs/*.jar
+
+# Airflow runtime (logs y plugins generados)
+deployment/airflow/logs/
+deployment/airflow/plugins/*
+!deployment/airflow/plugins/.gitkeep

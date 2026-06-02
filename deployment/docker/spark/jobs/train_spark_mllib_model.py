@@ -1,20 +1,17 @@
 #!/usr/bin/env python
 """
-train_spark_mllib_model.py  (adaptado Parte II)
-================================================
+train_spark_mllib_model.py (v3 - con MLflow)
+============================================
 Entrena el modelo RandomForest de prediccion de retrasos.
+  - Lee datos del Lakehouse Iceberg (punto obl. 4)
+  - Guarda modelos en /opt/spark/models (luego subido a MinIO)
+  - Registra params + metricas en MLflow (punto 7)
 
-CAMBIOS respecto al original:
-  - LEE los datos de la tabla Iceberg lakehouse.flights.training_data
-    (en vez del JSONL local)  -> punto obligatorio 4 (leer del Lakehouse)
-  - GUARDA los modelos en /opt/spark/models (volumen) que luego se sube
-    a s3://lakehouse/models con mc  -> punto obligatorio 4 (modelos en Lakehouse)
-  - Se ejecuta en modo distribuido en el cluster Spark
-
-Uso (dentro del contenedor spark-master):
-  spark-submit --master spark://spark-master:7077 \
-    /opt/spark/jobs/train_spark_mllib_model.py
+Si MLflow no esta disponible (libreria no instalada), entrena sin tracking
+y deja un aviso en logs. Esto permite que el script funcione tambien fuera
+de Airflow.
 """
+import os
 import sys
 
 from pyspark.sql import SparkSession
@@ -23,131 +20,119 @@ from pyspark.ml.feature import Bucketizer, StringIndexer, VectorAssembler
 from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
-# Tabla Iceberg de entrada (creada en la Fase 1.5)
-SOURCE_TABLE = "lakehouse.flights.training_data"
+try:
+    import mlflow
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    print(">>> AVISO: MLflow no disponible, training sin tracking")
 
-# Directorio local (volumen) donde se guardan los modelos.
-# Un paso posterior con 'mc' los sube a s3://lakehouse/models/
+SOURCE_TABLE = "lakehouse.flights.training_data"
 MODELS_DIR = "/opt/spark/models"
+MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+MLFLOW_EXPERIMENT = os.environ.get("MLFLOW_EXPERIMENT_NAME", "flight_delay_training")
 
 
 def main():
-    spark = (
-        SparkSession.builder
-        .appName("TrainFlightDelayModel")
-        .getOrCreate()
-    )
+    spark = SparkSession.builder.appName("TrainFlightDelayModel").getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
 
     print("=" * 60)
     print(f"Spark {spark.version} | master={spark.sparkContext.master}")
-    print(f"Leyendo datos de la tabla Iceberg: {SOURCE_TABLE}")
+    if MLFLOW_AVAILABLE:
+        print(f"MLflow: {MLFLOW_TRACKING_URI} -> exp '{MLFLOW_EXPERIMENT}'")
     print("=" * 60)
 
-    # -----------------------------------------------------------------
-    # 1. LEER del Lakehouse (tabla Iceberg) en vez del JSONL local
-    # -----------------------------------------------------------------
-    features = spark.read.table(SOURCE_TABLE)
-    total = features.count()
-    print(f">>> Registros leidos del Lakehouse: {total}")
+    if MLFLOW_AVAILABLE:
+        mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+        mlflow.set_experiment(MLFLOW_EXPERIMENT)
+        mlflow_run = mlflow.start_run()
+        print(f">>> Run MLflow: {mlflow_run.info.run_id}")
+    else:
+        mlflow_run = None
 
-    # Comprobar nulos
-    null_counts = [
-        (c, features.where(features[c].isNull()).count())
-        for c in features.columns
-    ]
-    cols_with_nulls = [x for x in null_counts if x[1] > 0]
-    print(f">>> Columnas con nulos: {cols_with_nulls}")
+    try:
+        # 1. Leer datos
+        features = spark.read.table(SOURCE_TABLE)
+        total = features.count()
+        print(f">>> Registros del Lakehouse: {total}")
 
-    # -----------------------------------------------------------------
-    # 2. Feature engineering (identico al original)
-    # -----------------------------------------------------------------
-    # Variable Route = Origin-Dest
-    features_with_route = features.withColumn(
-        "Route",
-        concat(features.Origin, lit("-"), features.Dest)
-    )
+        if MLFLOW_AVAILABLE:
+            mlflow.log_param("training_records", total)
+            mlflow.log_param("source_table", SOURCE_TABLE)
+            mlflow.log_param("algorithm", "RandomForestClassifier")
 
-    # Bucketizar ArrDelay en 4 categorias (on-time, slight, late, very late)
-    splits = [-float("inf"), -15.0, 0, 30.0, float("inf")]
-    arrival_bucketizer = Bucketizer(
-        splits=splits,
-        inputCol="ArrDelay",
-        outputCol="ArrDelayBucket"
-    )
-    arrival_bucketizer.write().overwrite().save(
-        f"{MODELS_DIR}/arrival_bucketizer_2.0.bin"
-    )
-    print(">>> Bucketizer guardado")
-
-    ml_bucketized_features = arrival_bucketizer.transform(features_with_route)
-
-    # StringIndexer para columnas categoricas
-    for column in ["Carrier", "Origin", "Dest", "Route"]:
-        string_indexer = StringIndexer(
-            inputCol=column,
-            outputCol=column + "_index"
+        # 2. Feature engineering
+        features_with_route = features.withColumn(
+            "Route", concat(features.Origin, lit("-"), features.Dest)
         )
-        string_indexer_model = string_indexer.fit(ml_bucketized_features)
-        ml_bucketized_features = string_indexer_model.transform(ml_bucketized_features)
-        ml_bucketized_features = ml_bucketized_features.drop(column)
-        string_indexer_model.write().overwrite().save(
-            f"{MODELS_DIR}/string_indexer_model_{column}.bin"
+
+        splits = [-float("inf"), -15.0, 0, 30.0, float("inf")]
+        bucketizer = Bucketizer(splits=splits, inputCol="ArrDelay", outputCol="ArrDelayBucket")
+        bucketizer.write().overwrite().save(f"{MODELS_DIR}/arrival_bucketizer_2.0.bin")
+        print(">>> Bucketizer guardado")
+
+        ml_bucketized = bucketizer.transform(features_with_route)
+
+        for column in ["Carrier", "Origin", "Dest", "Route"]:
+            si = StringIndexer(inputCol=column, outputCol=column + "_index")
+            m = si.fit(ml_bucketized)
+            ml_bucketized = m.transform(ml_bucketized).drop(column)
+            m.write().overwrite().save(f"{MODELS_DIR}/string_indexer_model_{column}.bin")
+            print(f">>> StringIndexer {column} guardado")
+
+        numeric_cols = ["DepDelay", "Distance", "DayOfMonth", "DayOfWeek", "DayOfYear"]
+        index_cols = ["Carrier_index", "Origin_index", "Dest_index", "Route_index"]
+        va = VectorAssembler(inputCols=numeric_cols + index_cols, outputCol="Features_vec")
+        final = va.transform(ml_bucketized)
+        va.write().overwrite().save(f"{MODELS_DIR}/numeric_vector_assembler.bin")
+        print(">>> VectorAssembler guardado")
+        for c in index_cols:
+            final = final.drop(c)
+
+        # 3. RandomForest
+        rf_params = {"maxBins": 4657, "maxMemoryInMB": 1024, "numTrees": 20}
+        if MLFLOW_AVAILABLE:
+            for k, v in rf_params.items():
+                mlflow.log_param(k, v)
+
+        print(">>> Entrenando RF...")
+        rfc = RandomForestClassifier(
+            featuresCol="Features_vec", labelCol="ArrDelayBucket",
+            predictionCol="Prediction", **rf_params
         )
-        print(f">>> StringIndexer {column} guardado")
+        model = rfc.fit(final)
+        model.write().overwrite().save(
+            f"{MODELS_DIR}/spark_random_forest_classifier.flight_delays.5.0.bin"
+        )
+        print(">>> Modelo RF guardado")
 
-    # VectorAssembler
-    numeric_columns = ["DepDelay", "Distance", "DayOfMonth", "DayOfWeek", "DayOfYear"]
-    index_columns = ["Carrier_index", "Origin_index", "Dest_index", "Route_index"]
-    vector_assembler = VectorAssembler(
-        inputCols=numeric_columns + index_columns,
-        outputCol="Features_vec"
-    )
-    final_vectorized_features = vector_assembler.transform(ml_bucketized_features)
-    vector_assembler.write().overwrite().save(
-        f"{MODELS_DIR}/numeric_vector_assembler.bin"
-    )
-    print(">>> VectorAssembler guardado")
+        # 4. Evaluar
+        predictions = model.transform(final)
+        accuracy = MulticlassClassificationEvaluator(
+            predictionCol="Prediction", labelCol="ArrDelayBucket", metricName="accuracy"
+        ).evaluate(predictions)
+        f1 = MulticlassClassificationEvaluator(
+            predictionCol="Prediction", labelCol="ArrDelayBucket", metricName="f1"
+        ).evaluate(predictions)
 
-    for column in index_columns:
-        final_vectorized_features = final_vectorized_features.drop(column)
+        print(f">>> Accuracy={accuracy:.4f} F1={f1:.4f}")
 
-    # -----------------------------------------------------------------
-    # 3. Entrenar RandomForest
-    # -----------------------------------------------------------------
-    print(">>> Entrenando RandomForest (puede tardar)...")
-    rfc = RandomForestClassifier(
-        featuresCol="Features_vec",
-        labelCol="ArrDelayBucket",
-        predictionCol="Prediction",
-        maxBins=4657,
-        maxMemoryInMB=1024
-    )
-    model = rfc.fit(final_vectorized_features)
-    model.write().overwrite().save(
-        f"{MODELS_DIR}/spark_random_forest_classifier.flight_delays.5.0.bin"
-    )
-    print(">>> Modelo RandomForest guardado")
+        if MLFLOW_AVAILABLE:
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_metric("f1", f1)
+            print(">>> Metricas en MLflow")
 
-    # -----------------------------------------------------------------
-    # 4. Evaluar
-    # -----------------------------------------------------------------
-    predictions = model.transform(final_vectorized_features)
-    evaluator = MulticlassClassificationEvaluator(
-        predictionCol="Prediction",
-        labelCol="ArrDelayBucket",
-        metricName="accuracy"
-    )
-    accuracy = evaluator.evaluate(predictions)
-    print(f">>> Accuracy = {accuracy}")
-    predictions.groupBy("Prediction").count().show()
+        predictions.groupBy("Prediction").count().show()
 
-    print("=" * 60)
-    print("ENTRENAMIENTO: OK")
-    print(f"Modelos guardados en {MODELS_DIR} (subir a s3://lakehouse/models con mc)")
-    print("=" * 60)
+        print("=" * 60)
+        print("ENTRENAMIENTO: OK")
+        print("=" * 60)
 
-    spark.stop()
+    finally:
+        if MLFLOW_AVAILABLE and mlflow_run:
+            mlflow.end_run()
+        spark.stop()
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ volumes:
     name: bigdata-kafka-data
   cassandra-data:
     name: bigdata-cassandra-data
+  postgres-data:
+    name: bigdata-postgres-data
 
 services:
 
@@ -298,3 +300,184 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
+
+  # ===========================================================
+  # PostgreSQL compartido: backend de Airflow + backend de MLflow
+  # Dos bases de datos lógicas separadas dentro del mismo servidor.
+  # ===========================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: bigdata-postgres
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bigdata}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bigdata-postgres-2026}
+      POSTGRES_MULTIPLE_DATABASES: "airflow,mlflow"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./bootstrap/postgres-init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bigdata}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ===========================================================
+  # MLflow Tracking Server
+  # - Backend store: PostgreSQL (db 'mlflow')
+  # - Artifact store: MinIO (s3://lakehouse/mlflow-artifacts/)
+  # ===========================================================
+  mlflow:
+    build:
+      context: ../mlflow
+      dockerfile: Dockerfile
+    image: bigdata/mlflow:2.18.0
+    container_name: bigdata-mlflow
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "${MLFLOW_PORT:-5002}:5000"
+    environment:
+      # Credenciales S3 para que MLflow escriba artifacts en MinIO
+      AWS_ACCESS_KEY_ID: ${MINIO_APP_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_APP_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      MLFLOW_S3_IGNORE_TLS: "true"
+    command:
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=postgresql://${POSTGRES_USER:-bigdata}:${POSTGRES_PASSWORD:-bigdata-postgres-2026}@postgres:5432/mlflow
+      - --default-artifact-root=s3://lakehouse/mlflow-artifacts/
+      - --serve-artifacts
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ===========================================================
+  # Airflow 2.10.5 - Orquestación de DAGs
+  # 3 servicios coordinados: init (efimero), webserver, scheduler
+  # Ejecutor: LocalExecutor (no necesita Celery+Redis)
+  # ===========================================================
+  airflow-init:
+    build:
+      context: ../airflow
+      dockerfile: Dockerfile
+    image: bigdata/airflow:2.10.5
+    container_name: bigdata-airflow-init
+    networks:
+      - bigdata-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
+    environment: &airflow-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-bigdata}:${POSTGRES_PASSWORD:-bigdata-postgres-2026}@postgres:5432/airflow
+      AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth'
+      # MLflow accesible desde los DAGs
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_APP_USER}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_APP_PASSWORD}
+      AWS_DEFAULT_REGION: us-east-1
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/logs:/opt/airflow/logs
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../airflow/config:/opt/airflow/config
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create \
+          --username ${AIRFLOW_ADMIN_USER:-admin} \
+          --password ${AIRFLOW_ADMIN_PASSWORD:-admin} \
+          --firstname Admin \
+          --lastname Bigdata \
+          --role Admin \
+          --email admin@bigdata.local || echo "Usuario ya existe, ok"
+        echo "OK: Airflow inicializado"
+
+  airflow-webserver:
+    build:
+      context: ../airflow
+      dockerfile: Dockerfile
+    image: bigdata/airflow:2.10.5
+    container_name: bigdata-airflow-webserver
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    # UID airflow + GID del grupo docker del host (para acceder al socket)
+    user: "${AIRFLOW_UID:-50000}:${DOCKER_GID:-108}"
+    group_add:
+      - "${DOCKER_GID:-108}"
+    environment: *airflow-env
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/logs:/opt/airflow/logs
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../airflow/config:/opt/airflow/config
+      # Socket Docker para que los DAGs puedan 'docker exec'
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${AIRFLOW_PORT:-8082}:8080"
+    command: webserver
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  airflow-scheduler:
+    build:
+      context: ../airflow
+      dockerfile: Dockerfile
+    image: bigdata/airflow:2.10.5
+    container_name: bigdata-airflow-scheduler
+    restart: unless-stopped
+    networks:
+      - bigdata-net
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    user: "${AIRFLOW_UID:-50000}:${DOCKER_GID:-108}"
+    group_add:
+      - "${DOCKER_GID:-108}"
+    environment: *airflow-env
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/logs:/opt/airflow/logs
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../airflow/config:/opt/airflow/config
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
