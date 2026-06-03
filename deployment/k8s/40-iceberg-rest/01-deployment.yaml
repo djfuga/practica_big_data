@@ -1,0 +1,70 @@
+# Iceberg REST Catalog - Stateless
+# Los metadatos de las tablas viven en MinIO (s3://lakehouse/warehouse/)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iceberg-rest
+  namespace: bigdata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg-rest
+  template:
+    metadata:
+      labels:
+        app: iceberg-rest
+    spec:
+      containers:
+        - name: iceberg-rest
+          image: apache/iceberg-rest-fixture:1.10.1
+          ports:
+            - name: rest
+              containerPort: 8181
+          env:
+            # Tipo de catálogo: usar JDBC backend (SQLite interno)
+            # Para producción se usaría PostgreSQL, para dev local SQLite es OK
+            - name: CATALOG_WAREHOUSE
+              value: "s3://lakehouse/warehouse/"
+            - name: CATALOG_IO__IMPL
+              value: "org.apache.iceberg.aws.s3.S3FileIO"
+            - name: CATALOG_S3_ENDPOINT
+              value: "http://minio:9000"
+            - name: CATALOG_S3_PATH__STYLE__ACCESS
+              value: "true"
+            # Credenciales S3 desde Secret
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_DEFAULT_REGION
+          readinessProbe:
+            httpGet:
+              path: /v1/config
+              port: 8181
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 8181
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+              cpu: 500m

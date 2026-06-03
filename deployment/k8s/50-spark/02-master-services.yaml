@@ -1,0 +1,34 @@
+# ClusterIP: 'spark-master:7077' (interno) + 'spark-master:8080' (UI interno)
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master
+  namespace: bigdata
+spec:
+  type: ClusterIP
+  selector:
+    app: spark-master
+  ports:
+    - name: rpc
+      port: 7077
+      targetPort: 7077
+    - name: ui
+      port: 8080
+      targetPort: 8080
+
+---
+# NodePort: UI Spark accesible desde el host
+apiVersion: v1
+kind: Service
+metadata:
+  name: spark-master-ui
+  namespace: bigdata
+spec:
+  type: NodePort
+  selector:
+    app: spark-master
+  ports:
+    - name: ui
+      port: 8080
+      targetPort: 8080
+      nodePort: 30180

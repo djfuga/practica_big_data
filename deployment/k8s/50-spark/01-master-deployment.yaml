@@ -1,0 +1,62 @@
+# Spark Master (Deployment + Service)
+# IMPORTANTE: enableServiceLinks=false porque las env vars inyectadas
+# automaticamente por K8s para el Service 'spark-master' (SPARK_MASTER_PORT)
+# colisionan con las propias de Spark (que espera un numero, no una URI tcp://)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-master
+  namespace: bigdata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-master
+  template:
+    metadata:
+      labels:
+        app: spark-master
+    spec:
+      enableServiceLinks: false   # <-- KEY FIX: evita inyectar SPARK_MASTER_PORT="tcp://..."
+      containers:
+        - name: spark-master
+          image: bigdata/spark:4.1.1
+          imagePullPolicy: Never
+          command:
+            - /opt/spark/bin/spark-class
+            - org.apache.spark.deploy.master.Master
+          ports:
+            - name: rpc
+              containerPort: 7077
+            - name: ui
+              containerPort: 8080
+          env:
+            - name: SPARK_MASTER_HOST
+              value: "0.0.0.0"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+          readinessProbe:
+            tcpSocket:
+              port: 7077
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 7077
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: 512Mi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+              cpu: 1000m

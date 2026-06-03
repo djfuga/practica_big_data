@@ -1,0 +1,74 @@
+# Spark Streaming Job (Scala MakePrediction)
+# Deployment de larga duración, igual que master/worker
+# - Lee de Kafka topic 'flight-delay-request'
+# - Aplica los 7 modelos ML cargados desde /opt/spark/models/
+# - Escribe predicciones a Cassandra (flight_db.flight_delay_predictions) y Kafka response
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-streaming
+  namespace: bigdata
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # Para drivers Spark mejor no overlapear
+  selector:
+    matchLabels:
+      app: spark-streaming
+  template:
+    metadata:
+      labels:
+        app: spark-streaming
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: streaming
+          image: bigdata/spark:4.1.1
+          imagePullPolicy: Never
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo ">>> Pod IP: $POD_IP"
+              echo ">>> JAR disponible:"
+              ls -lh /opt/spark/jobs/flight_prediction.jar
+              echo ">>> Modelos disponibles:"
+              ls /opt/spark/models/ 2>/dev/null || echo "(esperando modelos)"
+
+              sleep 8
+
+              echo ">>> Lanzando MakePrediction streaming..."
+              /opt/spark/bin/spark-submit \
+                --class es.upm.dit.ging.predictor.MakePrediction \
+                --master spark://spark-master:7077 \
+                --deploy-mode client \
+                --conf spark.driver.host=$POD_IP \
+                --conf spark.driver.bindAddress=0.0.0.0 \
+                --conf spark.driver.port=40000 \
+                --conf spark.driver.blockManager.port=40001 \
+                --conf spark.driver.memory=1g \
+                --conf spark.executor.memory=1g \
+                /opt/spark/jobs/flight_prediction.jar
+          resources:
+            requests:
+              memory: 768Mi
+              cpu: 200m
+            limits:
+              memory: 1.5Gi
+              cpu: 1000m

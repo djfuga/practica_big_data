@@ -1,0 +1,25 @@
+# Configuración común no sensible
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bigdata-config
+  namespace: bigdata
+data:
+  # MinIO
+  MINIO_REGION: us-east-1
+  MINIO_LAKEHOUSE_BUCKET: lakehouse
+  MINIO_ENDPOINT: http://minio:9000
+
+  # Cassandra
+  CASSANDRA_HOST: cassandra
+  CASSANDRA_PORT: "9042"
+  CASSANDRA_KEYSPACE: flight_db
+
+  # Kafka (bootstrap servers internos al cluster)
+  KAFKA_BROKER: kafka:9092
+
+  # Iceberg REST
+  ICEBERG_REST_URI: http://iceberg-rest:8181
+
+  # Spark
+  SPARK_MASTER_URL: spark://spark-master:7077

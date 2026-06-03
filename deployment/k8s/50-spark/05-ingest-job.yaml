@@ -1,0 +1,53 @@
+# Job de ingesta Iceberg - el dataset esta DENTRO de la imagen Spark
+# (Tanto en driver como en executors, no necesita download)
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: iceberg-ingest
+  namespace: bigdata
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      enableServiceLinks: false
+      containers:
+        - name: ingest
+          image: bigdata/spark:4.1.1
+          imagePullPolicy: Never
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo ">>> Pod IP: $POD_IP"
+              echo ">>> Dataset en imagen:"
+              ls -lh /opt/spark/data/
+              sleep 5
+
+              /opt/spark/bin/spark-submit \
+                --master spark://spark-master:7077 \
+                --deploy-mode client \
+                --conf spark.driver.host=$POD_IP \
+                --conf spark.driver.bindAddress=0.0.0.0 \
+                --conf spark.driver.port=40000 \
+                --conf spark.driver.blockManager.port=40001 \
+                --conf spark.driver.memory=1g \
+                --conf spark.executor.memory=1g \
+                /opt/spark/jobs/ingest_training_data.py

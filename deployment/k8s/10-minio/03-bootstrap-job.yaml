@@ -1,0 +1,72 @@
+# Job de bootstrap MinIO
+# - Espera a que MinIO este listo
+# - Crea el bucket 'lakehouse'
+# - Crea el usuario de aplicacion 'bigdata' con politica readwrite
+# - Crea las carpetas iniciales del bucket
+#
+# Es un Job (no Deployment): se ejecuta una vez y se queda en estado Completed
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-bootstrap
+  namespace: bigdata
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: minio/mc:RELEASE.2025-04-08T15-39-49Z
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: MINIO_ROOT_PASSWORD
+            - name: MINIO_APP_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: MINIO_APP_USER
+            - name: MINIO_APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: MINIO_APP_PASSWORD
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Esperando a MinIO..."
+              until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1; do
+                sleep 2
+              done
+              echo "MinIO accesible"
+
+              # Crear bucket lakehouse (idempotente)
+              mc mb --ignore-existing local/lakehouse
+              echo "Bucket lakehouse OK"
+
+              # Crear estructura interna
+              for dir in raw warehouse models mlflow-artifacts; do
+                echo "placeholder" | mc pipe local/lakehouse/$dir/.placeholder
+              done
+              echo "Carpetas iniciales OK"
+
+              # Crear usuario de aplicacion si no existe
+              if ! mc admin user info local "$MINIO_APP_USER" >/dev/null 2>&1; then
+                mc admin user add local "$MINIO_APP_USER" "$MINIO_APP_PASSWORD"
+                mc admin policy attach local readwrite --user "$MINIO_APP_USER"
+                echo "Usuario $MINIO_APP_USER creado"
+              else
+                echo "Usuario $MINIO_APP_USER ya existe"
+              fi
+
+              echo "BOOTSTRAP MINIO: OK"

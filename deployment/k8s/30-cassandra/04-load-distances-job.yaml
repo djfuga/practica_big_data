@@ -1,0 +1,97 @@
+# Job que carga las 4696 distancias en Cassandra
+# 1. Descarga origin_dest_distances.jsonl desde MinIO
+# 2. Inserta en flight_db.origin_dest_distances con prepared statements
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cassandra-load-distances
+  namespace: bigdata
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: loader
+          image: python:3.11-slim
+          env:
+            # Credenciales MinIO (cliente S3)
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_DEFAULT_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: AWS_DEFAULT_REGION
+            - name: S3_ENDPOINT_URL
+              value: http://minio:9000
+            - name: CASSANDRA_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: bigdata-config
+                  key: CASSANDRA_HOST
+            - name: CASSANDRA_KEYSPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: bigdata-config
+                  key: CASSANDRA_KEYSPACE
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo ">>> Instalando dependencias..."
+              pip install --quiet boto3==1.35.99 cassandra-driver==3.29.2
+
+              echo ">>> Descargando dataset de MinIO..."
+              python3 << 'PYEOF'
+              import os, boto3, json
+              from cassandra.cluster import Cluster
+
+              # Descargar el JSONL desde MinIO
+              s3 = boto3.client(
+                  's3',
+                  endpoint_url=os.environ['S3_ENDPOINT_URL'],
+                  region_name=os.environ['AWS_DEFAULT_REGION'],
+              )
+              local_path = '/tmp/distances.jsonl'
+              s3.download_file('lakehouse', 'raw/origin_dest_distances.jsonl', local_path)
+              size = os.path.getsize(local_path)
+              print(f'>>> Descargado: {size:,} bytes')
+
+              # Conectar a Cassandra
+              print('>>> Conectando a Cassandra...')
+              cluster = Cluster([os.environ['CASSANDRA_HOST']])
+              session = cluster.connect(os.environ['CASSANDRA_KEYSPACE'])
+
+              # Insertar con prepared statement
+              ps = session.prepare(
+                  'INSERT INTO origin_dest_distances (origin, dest, distance) VALUES (?, ?, ?)'
+              )
+
+              count = 0
+              with open(local_path, 'r') as f:
+                  for line in f:
+                      entry = json.loads(line)
+                      session.execute(ps, (entry['Origin'], entry['Dest'], float(entry['Distance'])))
+                      count += 1
+                      if count % 1000 == 0:
+                          print(f'>>> Insertadas {count} distancias...')
+
+              print(f'>>> TOTAL insertadas: {count}')
+
+              # Verificar
+              row = session.execute('SELECT COUNT(*) FROM origin_dest_distances').one()
+              print(f'>>> COUNT(*) en Cassandra: {row[0]}')
+
+              cluster.shutdown()
+              print('CARGA DISTANCIAS CASSANDRA: OK')
+              PYEOF

@@ -1,0 +1,40 @@
+# Configuración del cluster kind para la práctica Big Data 2026
+# Un solo nodo con todos los puertos expuestos al host (WSL2)
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: bigdata
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      # Flask web
+      - containerPort: 30050
+        hostPort: 30050
+        protocol: TCP
+      # MinIO console
+      - containerPort: 30090
+        hostPort: 30090
+        protocol: TCP
+      # MinIO API
+      - containerPort: 30091
+        hostPort: 30091
+        protocol: TCP
+      # Spark Master UI
+      - containerPort: 30180
+        hostPort: 30180
+        protocol: TCP
+      # Spark Worker UI
+      - containerPort: 30181
+        hostPort: 30181
+        protocol: TCP
+      # Airflow webserver
+      - containerPort: 30182
+        hostPort: 30182
+        protocol: TCP
+      # MLflow
+      - containerPort: 30002
+        hostPort: 30002
+        protocol: TCP
+      # Iceberg REST
+      - containerPort: 30183
+        hostPort: 30183
+        protocol: TCP

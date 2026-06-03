@@ -1,0 +1,48 @@
+# Headless: necesario para StatefulSet (DNS estable de cada pod)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: bigdata
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - name: internal
+      port: 9092
+    - name: controller
+      port: 9093
+
+---
+# Service ClusterIP: lo que usa el resto del stack ('kafka:9092')
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: bigdata
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - name: internal
+      port: 9092
+      targetPort: 9092
+
+---
+# Service NodePort para acceso EXTERNO desde el host (puerto 30094)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-external
+  namespace: bigdata
+spec:
+  type: NodePort
+  selector:
+    app: kafka
+  ports:
+    - name: external
+      port: 9094
+      targetPort: 9094
+      nodePort: 30094

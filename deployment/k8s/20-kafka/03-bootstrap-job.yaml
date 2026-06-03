@@ -1,0 +1,43 @@
+# Job que crea los 2 topics que usa la aplicacion
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-bootstrap
+  namespace: bigdata
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: apache/kafka:4.2.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Esperando a Kafka..."
+              until /opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server kafka:9092 >/dev/null 2>&1; do
+                sleep 3
+              done
+              echo "Kafka accesible"
+
+              # Crear topic request (idempotente con --if-not-exists)
+              /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+                --bootstrap-server kafka:9092 \
+                --topic flight-delay-request \
+                --partitions 3 --replication-factor 1
+              echo "Topic flight-delay-request OK"
+
+              # Crear topic response
+              /opt/kafka/bin/kafka-topics.sh --create --if-not-exists \
+                --bootstrap-server kafka:9092 \
+                --topic flight-delay-classification-response \
+                --partitions 3 --replication-factor 1
+              echo "Topic flight-delay-classification-response OK"
+
+              echo "=== Topics existentes ==="
+              /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server kafka:9092
+
+              echo "BOOTSTRAP KAFKA: OK"

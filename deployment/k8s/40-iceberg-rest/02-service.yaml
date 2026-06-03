@@ -1,0 +1,31 @@
+# Service ClusterIP: 'iceberg-rest:8181' desde otros pods
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest
+  namespace: bigdata
+spec:
+  type: ClusterIP
+  selector:
+    app: iceberg-rest
+  ports:
+    - name: rest
+      port: 8181
+      targetPort: 8181
+
+---
+# Service NodePort: acceso desde el host (puerto 30183)
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest-external
+  namespace: bigdata
+spec:
+  type: NodePort
+  selector:
+    app: iceberg-rest
+  ports:
+    - name: rest
+      port: 8181
+      targetPort: 8181
+      nodePort: 30183

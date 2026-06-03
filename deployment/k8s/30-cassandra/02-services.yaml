@@ -1,0 +1,31 @@
+# Headless para StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: cassandra-headless
+  namespace: bigdata
+spec:
+  clusterIP: None
+  selector:
+    app: cassandra
+  ports:
+    - name: cql
+      port: 9042
+    - name: intra
+      port: 7000
+
+---
+# Service ClusterIP: lo usan Flask y el job Scala
+apiVersion: v1
+kind: Service
+metadata:
+  name: cassandra
+  namespace: bigdata
+spec:
+  type: ClusterIP
+  selector:
+    app: cassandra
+  ports:
+    - name: cql
+      port: 9042
+      targetPort: 9042

@@ -1,0 +1,53 @@
+# Job que crea el keyspace flight_db y las 2 tablas
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cassandra-schema
+  namespace: bigdata
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: schema
+          image: cassandra:5.0
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Esperando a Cassandra..."
+              until cqlsh cassandra -e "DESCRIBE KEYSPACES" >/dev/null 2>&1; do
+                sleep 5
+              done
+              echo "Cassandra accesible"
+
+              echo "Creando schema..."
+              cqlsh cassandra <<CQLEOF
+              CREATE KEYSPACE IF NOT EXISTS flight_db
+                WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1};
+
+              CREATE TABLE IF NOT EXISTS flight_db.origin_dest_distances (
+                  origin text,
+                  dest text,
+                  distance double,
+                  PRIMARY KEY (origin, dest)
+              );
+
+              CREATE TABLE IF NOT EXISTS flight_db.flight_delay_predictions (
+                  uuid text PRIMARY KEY,
+                  origin text,
+                  dest text,
+                  flight_date text,
+                  carrier text,
+                  dep_delay double,
+                  distance double,
+                  prediction int,
+                  created_at timestamp
+              );
+
+              DESCRIBE KEYSPACE flight_db;
+              CQLEOF
+
+              echo "BOOTSTRAP CASSANDRA SCHEMA: OK"

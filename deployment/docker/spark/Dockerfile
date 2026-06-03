@@ -46,6 +46,16 @@ RUN echo "=== Conectores instalados ===" && \
 # 3. Configuracion
 COPY conf/spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 
+# 3.2 Scripts PySpark y tests (necesarios para K8s, donde no hay bind mounts)
+COPY jobs/  /opt/spark/jobs/
+COPY tests/ /opt/spark/tests/
+
+# 3.3 Dataset training empotrado (necesario para K8s - sin bind mounts)
+COPY simple_flight_delay_features.jsonl.bz2 /opt/spark/data/simple_flight_delay_features.jsonl.bz2
+
+# 3.4 Modelos ML entrenados empotrados (MakePrediction.jar los lee de /opt/spark/models/)
+COPY models_to_embed/ /opt/spark/models/
+
 # 4. Usuario no-root
 USER spark
 WORKDIR /opt/spark

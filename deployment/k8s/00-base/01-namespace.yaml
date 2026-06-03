@@ -1,0 +1,8 @@
+# Namespace donde vivira todo el stack
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bigdata
+  labels:
+    project: bigdata-2026
+    environment: dev
