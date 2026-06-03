@@ -1,528 +1,425 @@
-# Práctica Big Data 2026 — Parte II
+# Práctica Big Data 2026 – Parte II
 
-**Predicción de retrasos de vuelos** con arquitectura Lakehouse y procesamiento en streaming.
-
-> **Asignatura**: Ingenieria Big Data en la Nube
-> **ETSIT — Universidad Politécnica de Madrid** · Curso 2025–2026
-> **Basado en**: https://github.com/Big-Data-ETSIT/practica_creativa
+**Predicción de retrasos de vuelos en tiempo real** con Spark, Kafka, Cassandra,
+Iceberg Lakehouse, MLflow, Airflow, MinIO y Flask.
 
 ---
 
-## 📑 Tabla de contenidos
+## Estado de cumplimiento
 
-1. [Descripción](#descripción)
-2. [Arquitectura](#arquitectura)
-3. [Stack tecnológico](#stack-tecnológico-y-versiones)
-4. [Estado de los puntos de evaluación](#estado-de-los-puntos-de-evaluación)
-5. [Requisitos previos](#requisitos-previos)
-6. [Despliegue paso a paso](#despliegue-paso-a-paso)
-7. [Verificación end-to-end](#verificación-end-to-end)
-8. [Operación día a día](#operación-día-a-día)
-9. [Estructura del repositorio](#estructura-del-repositorio)
-10. [Notas de diseño](#notas-de-diseño)
-11. [Troubleshooting](#troubleshooting)
+| Punto | Descripción | Estado |
+|-------|-------------|--------|
+| 1 (obl) | Datos de entrenamiento en Iceberg sobre MinIO | Completado |
+| 2 (obl) | Distancias en Cassandra | Completado |
+| 3 (obl) | Predicciones por Kafka + WebSocket + sink Cassandra | Completado |
+| 4 (obl) | Training lee y escribe en el Lakehouse | Completado |
+| 5 (obl) | Despliegue Docker Compose | Completado |
+| 6 | Despliegue completo en Kubernetes | Completado (local con kind) |
+| 7 | Airflow + MLflow integrados | Completado |
+| 8 | Despliegue en GCloud (GKE) | Pendiente (opcional) |
+| 9 | Observabilidad / optimización | Pendiente |
 
----
-
-## Descripción
-
-Sistema que predice si un vuelo sufrirá retraso. Componentes:
-
-- **Lakehouse** (Iceberg sobre MinIO) → almacena el dataset de entrenamiento (~457K vuelos) y los modelos ML.
-- **Entrenamiento batch** (PySpark) → lee la tabla Iceberg, entrena un RandomForest y guarda 7 artefactos (Bucketizer + 4 StringIndexers + VectorAssembler + RF) en el Lakehouse.
-- **Streaming** (Spark Structured Streaming en Scala 2.13) → consume peticiones de Kafka, aplica el pipeline ML, escribe la predicción simultáneamente a Kafka (response) y a Cassandra.
-- **Cassandra** → distancias origen-destino (~4.700 entradas) + persistencia de predicciones.
-- **Interfaz web** (Flask + SocketIO) → formulario, produce a Kafka, consumer Kafka en background emite la predicción al navegador por WebSocket.
+Estado: 9/10 puntos asegurados.
 
 ---
 
 ## Arquitectura
 
 ```
-            Navegador (HTML + Socket.IO)
-                       |
-                       | HTTP + WebSocket
-                       v
-              Flask + SocketIO  -----lee distancias-----> Cassandra
-                       |                                  (flight_db)
-                       | produce
-                       v
-                     Kafka  (topic: flight-delay-request)
-                       |
-                       | consume
-                       v
-            Spark Structured Streaming (Scala 2.13)
-                   master + worker (modo distribuido)
-                       |
-       lee modelos     |     produce a Kafka response  -> consumer Flask
-       del Lakehouse   |     escribe a Cassandra           -> WebSocket
-                       v                                     -> navegador
-              Iceberg REST Catalog
-                       |
-                       | S3FileIO
-                       v
-                     MinIO  (bucket: lakehouse/)
-                            ├── warehouse/   (tablas Iceberg)
-                            ├── raw/         (dataset crudo)
-                            └── models/      (7 artefactos ML)
++-------------+    +----------+    +---------------+   +-----------------+
+|  Navegador  | <- |  Flask   | <- |     Kafka     | <-|  Spark Scala    |
+|  + jQuery   | WS | SocketIO |    |  (2 topics)   |   |  Streaming Job  |
++-------------+    +----------+    +---------------+   +--------+--------+
+                       |  ^                                      |
+                       |  | distancias                           v predicción
+                       v  |                               +-------------+
+                  +----------+                            |  Cassandra  |
+                  |Cassandra | <--------------------------+ (predict. + |
+                  | flight_db|                            |  distances) |
+                  +----------+                            +-------------+
+
+       +----------------------+    +---------------+    +--------------+
+       |  PySpark Training    | -> | Iceberg REST  | -> |    MinIO     |
+       |  (RandomForest)      |    |   catalog     |    |  (Lakehouse) |
+       +----------------------+    +---------------+    +--------------+
+                  ^
+       +----------------------+    +----------+
+       |     Airflow DAGs     | -> |  MLflow  |
+       | (retrain + cleanup)  |    | Tracking |
+       +----------------------+    +----------+
 ```
 
 ---
 
-## Stack tecnológico y versiones
-
-Versiones congeladas (ver [`docs/VERSIONS.md`](docs/VERSIONS.md) para detalles):
-
-| Componente              | Versión                                  | Rol |
-|-------------------------|------------------------------------------|-----|
-| Apache Spark            | 4.1.1 (Scala 2.13, Java 17)              | Cluster standalone |
-| Apache Iceberg          | 1.10.1 (runtime 4.0_2.13)                | Formato Lakehouse |
-| Iceberg REST Catalog    | apache/iceberg-rest-fixture:1.10.1       | Gestor de metadata |
-| Apache Kafka            | 4.2.0 (KRaft, sin Zookeeper)             | Bus de eventos |
-| Apache Cassandra        | 5.0                                      | NoSQL distribuida |
-| MinIO                   | RELEASE.2025-04-08                       | Object storage S3 |
-| Flask + Flask-SocketIO  | 3.0.3 + 5.4.1                            | Servidor web + WS |
-| Cassandra Java driver   | 4.17.0 (+ shaded-guava 25.1)             | Sink desde Spark |
-| sbt + Scala compiler    | 1.10.7 + 2.13.16                         | Build del job |
-
----
-
-## Estado de los puntos de evaluación
-
-| Criterio | Pts | Estado |
-|---|---|---|
-| **1. Data Lakehouse con Iceberg (MinIO)** | 1 obl. | ✅ COMPLETO |
-| **2. Distancias en Cassandra** | 1 obl. | ✅ COMPLETO |
-| **3. Predicciones Kafka + WebSockets + Cassandra** | 1 obl. | ✅ COMPLETO |
-| **4. Training lee/escribe en Lakehouse** | 1 obl. | ✅ COMPLETO |
-| **5. Docker + docker-compose completo** | 1 obl. | ✅ COMPLETO |
-| 6. Despliegue en Kubernetes | 3 | ⏳ Pendiente |
-| 7. Airflow + MLflow | 1 | ⏳ Pendiente |
-| 8. Despliegue en GCloud | 1 | ⏳ Pendiente |
-| 9. Observabilidad / optimización | 1 | ⏳ Pendiente |
-
-**Servicios validados en modo distribuido**: el entrenamiento y las predicciones se ejecutan en el cluster Spark (master + worker en contenedores separados), no en `local[*]`.
-
----
-
-## Requisitos previos
-
-| Recurso | Mínimo | Recomendado |
-|---|---|---|
-| **Docker** | 24.x | 28.x |
-| **Docker Compose** | v2 | v2 |
-| **RAM disponible para Docker** | 8 GB | 10 GB |
-| **Disco libre** | 15 GB | 20 GB |
-| **Conexión a internet** | Sí (primer build) | — |
-
-### Windows + WSL2
-
-Asignar al menos 10 GB de RAM a WSL2 en `%UserProfile%\.wslconfig`:
-
-```ini
-[wsl2]
-memory=10GB
-processors=8
-swap=4GB
-```
-
-Después: `wsl --shutdown` desde PowerShell y reabrir terminal Ubuntu.
-
----
-
-## Despliegue paso a paso
-
-### 1. Clonar el repositorio
-
-```bash
-git clone https://github.com/djfuga/practica-bigdata-2026.git
-cd practica-bigdata-2026
-```
-
-### 2. Descargar los datasets
-
-⚠️ Los datasets **no se versionan en Git** (son pesados). Hay que descargarlos:
-
-```bash
-cd data/
-
-curl -Lo simple_flight_delay_features.jsonl.bz2 \
-  "http://s3.amazonaws.com/agile_data_science/simple_flight_delay_features.jsonl.bz2"
-
-curl -Lo origin_dest_distances.jsonl \
-  "http://s3.amazonaws.com/agile_data_science/origin_dest_distances.jsonl"
-
-ls -lah *.jsonl*    # debe mostrar ~4.5 MB + ~218 KB
-cd ..
-```
-
-### 3. Configurar variables de entorno
-
-```bash
-cd deployment/docker
-cp .env.example .env
-cd ../..
-```
-
-> 💡 El `.env` por defecto trae credenciales de desarrollo local. Para uso normal de la práctica no hay que tocar nada.
-
-### 4. Preparar permisos del directorio de modelos
-
-El cluster Spark escribe los modelos a una carpeta del host vía bind mount. Como Spark corre con UID 185 dentro del contenedor, damos permisos abiertos a la carpeta:
-
-```bash
-chmod 777 models
-```
-
-### 5. Compilar el job Scala de streaming
-
-El JAR del job no se versiona (es un binario). Hay que compilarlo:
-
-```bash
-cd src/flight_prediction
-
-docker run --rm \
-  -v "$(pwd)":/app \
-  -v sbt-cache:/root/.sbt \
-  -v sbt-ivy:/root/.ivy2 \
-  -w /app \
-  sbtscala/scala-sbt:eclipse-temurin-17.0.13_11_1.10.7_2.13.15 \
-  sbt clean assembly
-
-# Copiar el JAR a la ruta que Spark monta como volumen
-cp target/scala-2.13/flight_prediction.jar ../../deployment/docker/spark/jobs/
-
-cd ../..
-```
-
-⚠️ El primer build sbt descarga muchas dependencias (~5–10 min). Los siguientes son rápidos gracias a los volúmenes `sbt-cache` y `sbt-ivy`.
-
-### 6. Construir las imágenes propias
-
-```bash
-cd deployment/docker
-docker compose build spark-master web
-```
-
-Toma ~10 min la primera vez (Spark base + conectores Iceberg/Kafka/Cassandra + Python deps + Flask).
-
-### 7. Levantar todo el stack
-
-```bash
-docker compose up -d
-echo "Esperando 90s a que arranquen Cassandra y Spark..."
-sleep 90
-
-docker compose ps
-```
-
-Estado esperado: 7 servicios `Up (healthy)` + 3 `*-init` en `Exited (0)`:
-
-```
-bigdata-cassandra      Up (healthy)
-bigdata-iceberg-rest   Up (healthy)
-bigdata-kafka          Up (healthy)
-bigdata-minio          Up (healthy)
-bigdata-spark-master   Up (healthy)
-bigdata-spark-worker   Up (healthy)
-bigdata-web            Up (healthy)
-```
-
-### 8. Inicializar los datos (una sola vez)
-
-#### 8.1 Ingestar el dataset al Lakehouse Iceberg
-
-```bash
-docker compose exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark/jobs/ingest_training_data.py
-```
-
-Debe terminar con `INGESTA ICEBERG: OK` (457.013 registros en `lakehouse.flights.training_data`).
-
-#### 8.2 Cargar las distancias en Cassandra
-
-```bash
-cd ../..   # raíz del repo
-
-docker run --rm --network bigdata-net \
-  -v "$(pwd)/src/scripts:/scripts:ro" \
-  -v "$(pwd)/data:/data:ro" \
-  python:3.11-slim \
-  sh -c "pip install --quiet cassandra-driver==3.29.2 && \
-         python3 /scripts/load_distances_cassandra.py /data/origin_dest_distances.jsonl"
-
-cd deployment/docker
-```
-
-Debe terminar con `CARGA DISTANCIAS CASSANDRA: OK` (4.696 distancias).
-
-### 9. Entrenar el modelo
-
-```bash
-docker compose exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark/jobs/train_spark_mllib_model.py
-```
-
-Toma ~3–5 min. Termina con `ENTRENAMIENTO: OK` y un accuracy en torno a 0.58.
-
-Los 7 modelos se generan en `./models/` (visibles desde el host). Subirlos al Lakehouse:
-
-```bash
-docker cp ../../models bigdata-minio:/tmp/models
-
-docker compose exec minio sh -c "
-  mc alias set local http://localhost:9000 minioadmin minioadmin123 >/dev/null 2>&1
-  mc cp --recursive /tmp/models/ local/lakehouse/models/
-  echo 'Modelos subidos al Lakehouse:'
-  mc ls local/lakehouse/models/
-"
-```
-
-### 10. Lanzar el job Scala de streaming
-
-Es un proceso de streaming: corre indefinidamente. Se lanza en una **terminal dedicada** para ver logs en vivo:
-
-```bash
-# Abrir una SEGUNDA terminal, ir a deployment/docker, y ejecutar:
-docker compose exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  --deploy-mode client \
-  --conf spark.driver.memory=1g \
-  --conf spark.executor.memory=1g \
-  --class es.upm.dit.ging.predictor.MakePrediction \
-  /opt/spark/jobs/flight_prediction.jar
-```
-
-Esperar a ver los 3 marcadores `>>>`:
-
-```
->>> Modelos cargados correctamente
->>> Sink Kafka activo -> topic=flight-delay-classification-response
->>> Sink Cassandra activo -> flight_db.flight_delay_predictions
-```
-
-A partir de ahí, el job está listo para procesar peticiones.
-
-### 11. Acceder a la aplicación
-
-| Servicio | URL | Credenciales |
-|---|---|---|
-| **Web de predicción** | http://localhost:5001 | — |
-| MinIO consola | http://localhost:9001 | `minioadmin` / `minioadmin123` |
-| Spark Master UI | http://localhost:8080 | — |
-| Spark Worker UI | http://localhost:8081 | — |
-| Iceberg REST | http://localhost:8181/v1/config | — |
-
----
-
-## Verificación end-to-end
-
-### Smoke test del Lakehouse (Iceberg sobre MinIO en modo distribuido)
-
-```bash
-cd deployment/docker
-docker compose exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  /opt/spark/tests/test_iceberg.py
-```
-
-Debe terminar con `SMOKE TEST ICEBERG: OK`.
-
-### Flujo completo predicción
-
-1. Abrir http://localhost:5001 en el navegador.
-2. Comprobar que aparece `WebSocket: conectado` abajo.
-3. Rellenar el formulario (los valores por defecto sirven) y pulsar **Predecir**.
-4. En ~5–15 segundos debe aparecer un resultado como **"Retraso moderado (clase 2)"**.
-
-### Verificar persistencia en Cassandra
-
-```bash
-docker compose exec cassandra cqlsh -k flight_db \
-  -e "SELECT COUNT(*) FROM flight_delay_predictions;"
-
-docker compose exec cassandra cqlsh -k flight_db \
-  -e "SELECT uuid, origin, dest, prediction FROM flight_delay_predictions LIMIT 5;"
-```
-
-Cada predicción que hagas en la web añade una fila.
-
-### Verificar mensaje en Kafka response
-
-```bash
-docker run --rm --network bigdata-net apache/kafka:4.2.0 \
-  /opt/kafka/bin/kafka-console-consumer.sh \
-  --bootstrap-server kafka:9092 \
-  --topic flight-delay-classification-response \
-  --from-beginning --max-messages 3 --timeout-ms 5000
-```
-
----
-
-## Operación día a día
-
-### Pausar entre sesiones (libera RAM, mantiene datos)
-
-```bash
-cd deployment/docker
-docker compose stop
-```
-
-### Reanudar
-
-```bash
-cd deployment/docker
-docker compose start
-sleep 60
-docker compose ps
-```
-
-### Relanzar el job Scala (no se reinicia solo)
-
-```bash
-docker compose exec spark-master /opt/spark/bin/spark-submit \
-  --master spark://spark-master:7077 \
-  --class es.upm.dit.ging.predictor.MakePrediction \
-  /opt/spark/jobs/flight_prediction.jar
-```
-
-### Parar el job Scala
-
-`Ctrl+C` en la terminal donde lo lanzaste. O si está en background:
-
-```bash
-docker compose exec spark-master sh -c "pkill -9 -f MakePrediction"
-```
-
-### Reset total (borra TODOS los datos)
-
-```bash
-docker compose down -v
-```
-
-Tras esto hay que repetir los pasos 7–10 (init de datos + training + lanzamiento del job).
-
-### Ver logs
-
-```bash
-docker compose logs -f web              # Flask
-docker compose logs -f spark-master     # Spark
-docker compose logs -f cassandra        # Cassandra
-```
+## Componentes y versiones
+
+| Componente | Versión |
+|---|---|
+| Apache Spark | 4.1.1 (Scala 2.13, Java 17) |
+| Apache Kafka | 4.2.0 (KRaft, sin Zookeeper) |
+| Apache Iceberg | 1.10.1 (REST catalog) |
+| Apache Cassandra | 5.0 |
+| Apache Airflow | 2.10.5 (LocalExecutor) |
+| MLflow | 2.18.0 |
+| MinIO | RELEASE.2025-04-08 |
+| PostgreSQL | 16 (backend Airflow + MLflow) |
+| Flask | 3.0 + Flask-SocketIO |
+| Kubernetes (kind) | v1.31.0 |
+| Helm | 3.21 |
 
 ---
 
 ## Estructura del repositorio
 
 ```
-practica-bigdata-2026/
-├── data/                                 # datasets (no versionados)
-│   └── README.md                         # instrucciones de descarga
+practica_big_data/
+├── src/                                  # Códigos fuente
+│   ├── flight_prediction/                # Job Scala (Spark Streaming)
+│   └── web/                              # Servidor Flask
 ├── deployment/
-│   ├── docker/
-│   │   ├── compose.yaml                  # 8 servicios + 3 init
+│   ├── docker/                           # Stack Docker Compose
+│   │   ├── compose.yaml
 │   │   ├── .env.example
-│   │   ├── bootstrap/                    # init scripts MinIO/Kafka/Cassandra
-│   │   └── spark/
-│   │       ├── Dockerfile                # imagen Spark con conectores
-│   │       ├── conf/spark-defaults.conf  # Iceberg + S3FileIO
-│   │       ├── tests/test_iceberg.py
-│   │       └── jobs/
-│   │           ├── ingest_training_data.py
-│   │           ├── train_spark_mllib_model.py
-│   │           └── flight_prediction.jar  # generado (no versionado)
-│   ├── gcp/                              # scripts GCloud (futuro)
-│   ├── k8s/                              # manifiestos K8s (futuro)
-│   └── airflow/                          # DAGs (futuro)
-├── src/
-│   ├── flight_prediction/                # proyecto sbt Scala 2.13
-│   │   ├── build.sbt
-│   │   ├── project/
-│   │   └── src/main/scala/es/upm/dit/ging/predictor/
-│   │       └── MakePrediction.scala
-│   ├── web/                              # servidor Flask
-│   │   ├── app.py
-│   │   ├── Dockerfile
-│   │   ├── requirements.txt
-│   │   └── templates/predict.html
-│   └── scripts/
-│       └── load_distances_cassandra.py
-├── models/                               # modelos (no versionados)
-├── docs/
-│   └── VERSIONS.md
-└── README.md
+│   │   ├── bootstrap/                    # Scripts init (postgres, kafka, cassandra)
+│   │   ├── spark/                        # Dockerfile + conf + jobs PySpark
+│   │   ├── web/                          # Dockerfile Flask
+│   │   ├── airflow/                      # Dockerfile (Python+Docker CLI)
+│   │   └── mlflow/                       # Dockerfile
+│   ├── airflow/dags/                     # DAGs (retrain, cleanup)
+│   └── k8s/                              # Manifiestos Kubernetes
+│       ├── kind-config.yaml
+│       ├── 00-base/                      # Namespace + Secrets + ConfigMap
+│       ├── 10-minio/
+│       ├── 20-kafka/
+│       ├── 30-cassandra/
+│       ├── 40-iceberg-rest/
+│       ├── 50-spark/                     # Master, worker, ingest, streaming
+│       └── 60-web/
+├── data/                                 # Datasets locales (gitignored)
+└── models/                               # Modelos entrenados (gitignored)
 ```
 
 ---
 
-## Notas de diseño
+## Requisitos
 
-### Por qué REST catalog para Iceberg
-
-La combinación Iceberg 1.10 + Spark 4.1 + MinIO + Hadoop catalog directo provoca un *dependency hell* del AWS SDK (v1 vs v2). El **Iceberg REST Catalog** (`apache/iceberg-rest-fixture:1.10.1`) aísla la gestión de metadata en un servicio dedicado y elimina el conflicto. Spark solo necesita `iceberg-aws-bundle` (SDK v2 puro). Además es el patrón estándar de la industria (Databricks Unity, Snowflake Polaris).
-
-### Por qué driver Java nativo para Cassandra (no spark-cassandra-connector)
-
-El `spark-cassandra-connector` oficial solo soporta hasta Spark 3.5. Con Spark 4.1 daría errores de API. La solución profesional es usar el **driver Java nativo de DataStax** (`CqlSession`) dentro de `foreachBatch`, que es agnóstico a la versión de Spark.
-
-Tres JARs necesarios del driver:
-- `java-driver-core-shaded-4.17.0` (driver, con Netty/Jackson shaded)
-- `java-driver-query-builder-4.17.0` (constructor de queries)
-- `java-driver-shaded-guava-25.1-jre-graal-sub-1` (Guava re-empaquetada, **imprescindible** o falla con `NoClassDefFoundError: ImmutableList`)
-
-### Por qué bind mount para los modelos (no named volume)
-
-Spark ML, al guardar modelos, crea directorios anidados desde varios executors. Un *named volume* dio problemas de permisos (UID 185 vs root) y de concurrencia. Un **bind mount** a `./models` del host garantiza permisos consistentes (con `chmod 777` único) y los modelos quedan accesibles para inspección sin entrar al contenedor.
-
-### Sobre seguridad de credenciales
-
-Las credenciales en `.env.example` y `spark-defaults.conf` son **de desarrollo local** (MinIO/Cassandra en una red Docker aislada). El `.env` real con secretos está excluido por `.gitignore`. Para Kubernetes (Fase futura) las credenciales se gestionarán mediante Secrets.
+- Linux (probado en WSL2 Ubuntu 24.04)
+- Docker 28+
+- Docker Compose 2.30+
+- 10 GB RAM mínimo, 4 cores
+- Para Kubernetes local: `kind` v0.24+, `kubectl` v1.31+
 
 ---
 
-## Troubleshooting
+## Despliegue A: Docker Compose (puntos obligatorios + Airflow/MLflow)
 
-### Cassandra tarda en arrancar (~60s) y los healthchecks fallan
-
-Es normal. Esperar y revisar `docker compose logs cassandra --tail=50`. Si tras 2 min sigue sin estar `healthy`, verificar que WSL2 tiene al menos 8 GB de RAM.
-
-### Puerto ocupado en el host
-
-Editar puertos en `deployment/docker/.env` (`WEB_PORT`, `KAFKA_EXTERNAL_PORT`, etc.) y `docker compose up -d` de nuevo.
-
-### El job Scala falla con `NoClassDefFoundError: ImmutableList`
-
-Significa que falta el JAR `java-driver-shaded-guava-25.1`. Reconstruir la imagen Spark:
+### 1. Preparar variables de entorno
 
 ```bash
 cd deployment/docker
-docker compose build spark-master
-docker compose up -d --force-recreate spark-master spark-worker
+cp .env.example .env
+# Editar .env solo si quieres cambiar credenciales por defecto
 ```
 
-### "Procesando..." en la web no termina
-
-Verificar que el job Scala está corriendo: http://localhost:8080 debe mostrar la app `FlightDelayStreamingPredictor` activa. Si no está, relanzarla con el comando del paso 10.
-
-### Reset total si nada funciona
+### 2. Construir imágenes propias
 
 ```bash
-cd deployment/docker
-docker compose down -v
-chmod 777 ../../models
-# repetir pasos 7-10
+docker compose build spark-master web mlflow airflow-webserver
 ```
 
-### El primer `docker compose build` falla por red
+### 3. Levantar todos los servicios
 
-Maven Central (`repo1.maven.org`) y Docker Hub no suelen estar bloqueados, pero hay redes universitarias restrictivas. Probar desde otra conexión o usar VPN.
+```bash
+docker compose up -d
+```
+
+Servicios que arranca:
+- MinIO + bucket lakehouse
+- Kafka KRaft + 2 topics
+- Cassandra + keyspace + carga de 4696 distancias
+- Iceberg REST catalog
+- Spark master + worker
+- Web Flask
+- PostgreSQL (backend Airflow + MLflow)
+- MLflow tracking server
+- Airflow init + webserver + scheduler
+
+Espera 3 min hasta que todos los healthchecks estén verdes:
+
+```bash
+docker compose ps
+```
+
+### 4. Ingesta inicial del lakehouse + entrenamiento
+
+```bash
+# Ingestar dataset crudo a tabla Iceberg
+docker compose exec spark-master spark-submit \
+  /opt/spark/jobs/ingest_training_data.py
+
+# Entrenar el modelo (lee de Iceberg, escribe modelos a Iceberg/MinIO)
+docker compose exec spark-master spark-submit \
+  /opt/spark/jobs/train_spark_mllib_model.py
+```
+
+### 5. Lanzar el job de predicción streaming
+
+```bash
+docker compose exec -d spark-master spark-submit \
+  --class es.upm.dit.ging.predictor.MakePrediction \
+  --master spark://spark-master:7077 \
+  /opt/spark/jobs/flight_prediction.jar
+```
+
+### 6. Acceder a las interfaces
+
+| Servicio | URL | Credenciales |
+|---|---|---|
+| Web (formulario predicción) | http://localhost:5000 | -- |
+| MinIO Console | http://localhost:9001 | minioadmin / minioadmin123 |
+| Spark Master UI | http://localhost:8080 | -- |
+| Iceberg REST | http://localhost:8181 | -- |
+| Airflow | http://localhost:8082 | admin / admin |
+| MLflow | http://localhost:5050 | -- |
+
+### 7. Operar Airflow
+
+```bash
+# Despausar los DAGs
+docker compose exec airflow-scheduler airflow dags unpause retrain_flight_model
+docker compose exec airflow-scheduler airflow dags unpause cleanup_old_predictions
+
+# Disparar manualmente (opcional)
+docker compose exec airflow-scheduler airflow dags trigger retrain_flight_model
+docker compose exec airflow-scheduler airflow dags trigger cleanup_old_predictions
+```
+
+### 8. Apagar
+
+```bash
+docker compose stop                     # Mantiene volúmenes
+docker compose down                     # Borra contenedores, mantiene volúmenes
+docker compose down -v                  # Borra TODO incluyendo datos
+```
 
 ---
 
-## Licencia
+## Despliegue B: Kubernetes local con kind
 
-Práctica académica con fines educativos. Basada en
-[Big-Data-ETSIT/practica_creativa](https://github.com/Big-Data-ETSIT/practica_creativa)
-(que a su vez se basa en el libro *Agile Data Science 2.0* de Russell Jurney).
+Estado: implementado y funcionando end-to-end. La infraestructura completa
+(MinIO, Kafka, Cassandra, Iceberg REST, Spark master/worker/streaming, Web)
+se despliega en un cluster kind con manifiestos nativos K8s. Se han adaptado
+las imágenes para no depender de bind mounts (datasets, scripts y modelos
+empotrados en la imagen Spark). Verificación: 4696 distancias en Cassandra,
+457013 registros en `lakehouse.flights.training_data`, predicción end-to-end
+operativa desde el formulario web.
+
+### 1. Crear cluster kind
+
+```bash
+cd deployment/k8s
+kind create cluster --config kind-config.yaml
+```
+
+El config expone 8 NodePorts al host (30050, 30090-30091, 30180-30183, 30002, 30094).
+
+### 2. Construir y cargar imágenes propias en el cluster
+
+Para que kind pueda usar las imágenes que no están en DockerHub:
+
+```bash
+# Reconstruir si hubo cambios
+cd ~/practica_big_data/deployment/docker
+docker compose build spark-master web
+
+# Cargar en el cluster (cada vez que cambie la imagen)
+kind load docker-image bigdata/spark:4.1.1 --name bigdata
+kind load docker-image bigdata/web:1.0     --name bigdata
+```
+
+### 3. Aplicar manifiestos por orden
+
+```bash
+cd ~/practica_big_data/deployment/k8s
+
+kubectl apply -f 00-base/
+kubectl apply -f 10-minio/
+sleep 30                              # MinIO debe estar Ready antes de los bootstraps de los demás
+kubectl apply -f 20-kafka/
+kubectl apply -f 30-cassandra/
+kubectl apply -f 40-iceberg-rest/
+kubectl apply -f 50-spark/01-master-deployment.yaml
+kubectl apply -f 50-spark/02-master-services.yaml
+kubectl apply -f 50-spark/03-worker-deployment.yaml
+kubectl apply -f 50-spark/04-worker-service.yaml
+kubectl apply -f 60-web/
+
+kubectl -n bigdata get pods           # esperar a que todos estén Ready
+```
+
+Primera ejecución: tarda 5-10 min en descargar imágenes oficiales (Kafka,
+Cassandra, Iceberg REST son las más pesadas). Las siguientes ejecuciones
+del cluster (sin destruirlo) son instantáneas.
+
+### 4. Subir datasets y modelos a MinIO en el cluster
+
+Los Jobs K8s leen los datasets desde MinIO (no del host). Primera vez:
+
+```bash
+cd ~/practica_big_data
+
+docker run --rm --network host --entrypoint sh \
+  -v "$(pwd)/data:/data:ro" \
+  -v "$(pwd)/models:/models:ro" \
+  minio/mc:RELEASE.2025-04-08T15-39-49Z \
+  -c "
+    mc alias set local http://localhost:30091 minioadmin minioadmin123 >/dev/null
+    mc cp /data/origin_dest_distances.jsonl       local/lakehouse/raw/
+    mc cp /data/simple_flight_delay_features.jsonl.bz2 local/lakehouse/raw/
+    mc cp --recursive /models/                    local/lakehouse/models/
+  "
+```
+
+### 5. Lanzar Jobs de bootstrap
+
+```bash
+# Carga de 4696 distancias a Cassandra (usa los datos subidos a MinIO)
+kubectl -n bigdata delete job cassandra-load-distances 2>/dev/null
+kubectl apply -f 30-cassandra/04-load-distances-job.yaml
+kubectl -n bigdata wait --for=condition=complete job/cassandra-load-distances --timeout=180s
+```
+
+### 6. Ingesta Iceberg (con cuidado de cores)
+
+Importante: el cluster tiene un solo worker con 2 cores. Si el streaming
+está corriendo ocupa los 2 cores y la ingesta se queda esperando. Conviene
+parar el streaming, ingestar y relanzar.
+
+```bash
+# Si el streaming está activo, escalarlo a 0
+kubectl -n bigdata scale deployment/spark-streaming --replicas=0 2>/dev/null
+
+# Ingestar
+kubectl apply -f 50-spark/05-ingest-job.yaml
+kubectl -n bigdata wait --for=condition=complete job/iceberg-ingest --timeout=300s
+
+# Relanzar streaming
+kubectl apply -f 50-spark/06-streaming-deployment.yaml
+kubectl -n bigdata scale deployment/spark-streaming --replicas=1
+```
+
+### 7. Acceder a las interfaces (NodePort)
+
+| Servicio | URL |
+|---|---|
+| Web | http://localhost:30050 |
+| MinIO Console | http://localhost:30090 |
+| MinIO S3 API | http://localhost:30091 |
+| Spark Master UI | http://localhost:30180 |
+| Spark Worker UI | http://localhost:30181 |
+| Iceberg REST | http://localhost:30183 |
+
+### 8. Smoke test end-to-end
+
+Abrir http://localhost:30050, rellenar el formulario con datos de un vuelo
+(p.ej. ATL->SFO, AA, 2026-12-25, DepDelay 0) y pulsar "Predecir". La
+predicción aparece en pocos segundos.
+
+### 9. Verificación de los puntos obligatorios
+
+```bash
+# Punto 1: datos en Iceberg
+kubectl -n bigdata logs job/iceberg-ingest -c ingest | grep "Registros"
+# Debe mostrar: ">>> Registros en la tabla Iceberg: 457013"
+
+# Punto 2: distancias en Cassandra
+kubectl -n bigdata run cassandra-verify --rm -i --restart=Never \
+  --image=cassandra:5.0 -- \
+  cqlsh cassandra -e "SELECT COUNT(*) FROM flight_db.origin_dest_distances;"
+# Debe mostrar: count = 4696
+
+# Punto 3 y 4: predicciones llegan a Cassandra
+kubectl -n bigdata run cassandra-verify --rm -i --restart=Never \
+  --image=cassandra:5.0 -- \
+  cqlsh cassandra -e "SELECT COUNT(*) FROM flight_db.flight_delay_predictions;"
+# Debe ir aumentando según haces predicciones desde el web
+```
+
+### 10. Borrar el cluster
+
+```bash
+kind delete cluster --name bigdata
+```
+
+---
+
+## Decisiones técnicas relevantes
+
+### Sobre Kubernetes
+
+1. **`enableServiceLinks: false`** en todos los pods de Spark y Web.
+   Razón: K8s inyecta env vars automáticas para cada Service del namespace
+   (`SPARK_MASTER_PORT="tcp://10.96.x.y:7077"`) que colisionan con las
+   variables nativas de Spark (que esperan un entero como puerto). Sin esta
+   flag, el master crashea con `NumberFormatException`.
+
+2. **`spark.driver.host=$POD_IP`** + `bindAddress=0.0.0.0` + puertos fijos
+   (40000/40001) en todos los jobs `spark-submit`.
+   Razón: el executor del worker debe poder conectar al driver del pod.
+   Sin esto, la app se queda en "Initial job has not accepted any resources"
+   indefinidamente.
+
+3. **Datos, scripts y modelos dentro de la imagen Spark** (no bind mount).
+   En docker-compose se usaban bind mounts. En K8s no existen, y los pods
+   driver y executor son independientes. Por eso `Dockerfile` incluye
+   `COPY jobs/`, `COPY tests/`, `COPY simple_flight_delay_features.jsonl.bz2`
+   y `COPY models_to_embed/`. Cada cambio en estos requiere rebuild +
+   `kind load docker-image`.
+
+4. **Sondas TCP en lugar de exec con JVM cliente**. Probar con
+   `kafka-topics.sh --list` arranca una JVM de 5-8s en cold start y la
+   sonda con timeout 5s falla. Solución: `tcpSocket: { port: 9092 }`.
+
+5. **StatefulSet + headless Service** para servicios con identidad
+   persistente (MinIO, Kafka, Cassandra). PVC dinámicos vía
+   local-path-provisioner incluido en kind.
+
+6. **Streaming como Deployment de larga duración**, no Job. Razón:
+   estos pods deben reiniciarse si caen. K8s lo gestiona automáticamente.
+
+7. **`enableServiceLinks: false`** también en Web. Aunque Flask no tiene
+   colisión directa, lo aplicamos como buena práctica para evitar sorpresas
+   futuras.
+
+### Sobre la arquitectura general
+
+1. **Iceberg REST en vez de Hadoop catalog** (más simple, sin dependencias
+   hadoop-aws).
+2. **S3FileIO directo** desde Spark/Iceberg (no necesita JARs adicionales).
+3. **PostgreSQL único** para Airflow y MLflow (dos schemas lógicos).
+4. **MLflow con artifact store en MinIO** (no en disco local del tracking
+   server).
+
+---
+
+## Limitaciones conocidas
+
+- En el cluster local con 1 worker de 2 cores, ingesta y streaming no pueden
+  correr a la vez. Operativa: parar uno, ejecutar el otro, relanzar.
+- La imagen Iceberg REST en kind no persiste su catálogo entre recreaciones
+  del cluster (usa SQLite en `/tmp`). Las tablas se reconstruyen relanzando
+  los Jobs de ingesta. En GKE se le pondría un PVC.
+- El cliente Kafka de Python en Web puede crashear si arranca antes de que
+  Kafka esté Ready. Solución: `kubectl rollout restart deployment/web`
+  cuando todos los servicios estén listos.
+
+---
+
+## Licencia y autoría
+
+Basado en https://github.com/Big-Data-ETSIT/practica_creativa
+(plantilla docente ETSIT-UPM, derivada a su vez de
+https://github.com/rjurney/Agile_Data_Code_2).
+
+Modificaciones, infraestructura, manifiestos K8s y documentación:
+djfug, 2025-2026.
