@@ -37,7 +37,7 @@ Grafana).
 | Spark master + worker | Sí | Sí |
 | Spark Streaming job (Scala) | Sí | Sí |
 | Web Flask (predicción) | Sí | Sí |
-| PostgreSQL | Sí | No (solo se usa con Airflow/MLflow) |
+| PostgreSQL | Sí | No (solo con Airflow/MLflow) |
 | MLflow Tracking | Sí | No |
 | Airflow (DAGs retrain + cleanup) | Sí | No |
 | Prometheus | No | Sí |
@@ -113,6 +113,17 @@ aporta más valor.
 
 ```
 practica_big_data/
+├── data/                                 # Datasets (incluidos en repo)
+│   ├── origin_dest_distances.jsonl              (218 KB)
+│   └── simple_flight_delay_features.jsonl.bz2   (4.5 MB)
+├── models/                               # Modelos pre-entrenados (incluidos)
+│   ├── arrival_bucketizer_2.0.bin/
+│   ├── numeric_vector_assembler.bin/
+│   ├── spark_random_forest_classifier.flight_delays.5.0.bin/
+│   ├── string_indexer_model_Carrier.bin/
+│   ├── string_indexer_model_Dest.bin/
+│   ├── string_indexer_model_Origin.bin/
+│   └── string_indexer_model_Route.bin/
 ├── src/                                  # Códigos fuente
 │   ├── flight_prediction/                # Job Scala (Spark Streaming)
 │   └── web/                              # Servidor Flask
@@ -122,6 +133,10 @@ practica_big_data/
 │   │   ├── .env.example
 │   │   ├── bootstrap/                    # Scripts init (postgres, kafka)
 │   │   ├── spark/                        # Dockerfile + conf + jobs PySpark
+│   │   │   ├── jobs/
+│   │   │   │   └── flight_prediction.jar # JAR Scala compilado (5.8 MB)
+│   │   │   ├── simple_flight_delay_features.jsonl.bz2  # Empotrado para K8s
+│   │   │   └── models_to_embed/          # Modelos empotrados para K8s
 │   │   ├── web/                          # Dockerfile Flask
 │   │   ├── airflow/                      # Dockerfile (Python + Docker CLI)
 │   │   └── mlflow/                       # Dockerfile MLflow
@@ -140,9 +155,17 @@ practica_big_data/
 │           ├── 01-spark-servicemonitor.yaml
 │           ├── 02-grafana-nodeport.yaml
 │           └── spark-dashboard.json
-├── data/                                 # Datasets (gitignored)
-└── models/                               # Modelos entrenados (gitignored)
+└── README.md
 ```
+
+**Nota sobre duplicación intencionada de datasets/modelos**:
+
+- `data/` y `models/` (raíz): se usan en Docker Compose vía bind mount
+- `deployment/docker/spark/simple_flight_delay_features.jsonl.bz2` y
+  `deployment/docker/spark/models_to_embed/`: copias **incluidas en el build
+  context** de la imagen Spark. Necesarias porque K8s no soporta bind
+  mounts: la imagen las copia DENTRO con `COPY` en el Dockerfile y así los
+  pods Spark en K8s tienen acceso a los ficheros sin depender del host.
 
 ---
 
@@ -235,30 +258,46 @@ rm get_helm.sh
 helm version --short
 ```
 
-### Paso 5: Datasets
-
-El repositorio NO incluye los datasets de vuelos por su tamaño. Hay que
-descargarlos antes del primer despliegue:
+### Paso 5: Clonar el repositorio
 
 ```bash
-cd ~/practica_big_data
+# El repositorio YA INCLUYE los datasets, modelos y JAR de streaming.
+# No es necesario descargar nada adicional.
+cd ~
+git clone https://github.com/djfuga/practica-bigdata-2026.git practica_big_data
+cd practica_big_data
 
-# Crear carpeta data si no existe
-mkdir -p data
+# Verificar contenido (debe mostrar ~10 MB de ficheros)
+echo "=== Datasets ==="
+ls -lh data/*.jsonl*
 
-# Dataset principal de entrenamiento (4.5 MB)
-curl -L -o data/simple_flight_delay_features.jsonl.bz2 \
-  https://raw.githubusercontent.com/Big-Data-ETSIT/practica_creativa/main/data/simple_flight_delay_features.jsonl.bz2
+echo ""
+echo "=== Modelos pre-entrenados ==="
+ls -1 models/
 
-# Dataset de distancias entre aeropuertos (220 KB)
-curl -L -o data/origin_dest_distances.jsonl \
-  https://raw.githubusercontent.com/Big-Data-ETSIT/practica_creativa/main/data/origin_dest_distances.jsonl
+echo ""
+echo "=== JAR de streaming Scala ==="
+ls -lh deployment/docker/spark/jobs/*.jar
+```
 
-# Verificar
-ls -lh data/
-# Debe mostrar:
-#   simple_flight_delay_features.jsonl.bz2 (~4.5 MB)
-#   origin_dest_distances.jsonl (~220 KB)
+Output esperado:
+
+```
+=== Datasets ===
+-rw-r--r-- 218K  data/origin_dest_distances.jsonl
+-rw-r--r-- 4.5M  data/simple_flight_delay_features.jsonl.bz2
+
+=== Modelos pre-entrenados ===
+arrival_bucketizer_2.0.bin
+numeric_vector_assembler.bin
+spark_random_forest_classifier.flight_delays.5.0.bin
+string_indexer_model_Carrier.bin
+string_indexer_model_Dest.bin
+string_indexer_model_Origin.bin
+string_indexer_model_Route.bin
+
+=== JAR de streaming Scala ===
+-rw-r--r-- 5.8M  deployment/docker/spark/jobs/flight_prediction.jar
 ```
 
 ### Paso 6: Comprobación completa de herramientas
@@ -274,8 +313,16 @@ echo "kind:           $(kind version | awk '{print $2}')"
 echo "helm:           $(helm version --short)"
 
 echo ""
-echo "=== Datasets ==="
+echo "=== Datasets disponibles ==="
 ls -lh data/*.jsonl* 2>/dev/null
+
+echo ""
+echo "=== Modelos disponibles ==="
+ls -1 models/ 2>/dev/null
+
+echo ""
+echo "=== JAR disponible ==="
+ls -lh deployment/docker/spark/jobs/*.jar 2>/dev/null
 
 echo ""
 echo "=== RAM disponible ==="
@@ -291,6 +338,7 @@ Despliegue rápido sin Kubernetes. Permite ejecutar y validar los 6 puntos
 de la práctica: obligatorios (1-5) + Airflow/MLflow (7).
 
 **Componentes que arranca este despliegue**:
+
 - MinIO + bucket lakehouse
 - Kafka KRaft + 2 topics (`flight-delay-request`, `flight-delay-classification-response`)
 - Cassandra + keyspace `flight_db` + 2 tablas + carga de 4696 distancias
@@ -358,14 +406,17 @@ docker compose exec spark-master spark-submit \
 #   INGESTA ICEBERG: OK
 ```
 
-### Paso 5: Entrenamiento inicial del modelo (punto 4)
+### Paso 5: Entrenamiento del modelo (opcional)
+
+Los modelos ya vienen pre-entrenados en `models/`. Solo es necesario
+re-entrenar si quieres regenerarlos:
 
 ```bash
 docker compose exec spark-master spark-submit \
   /opt/spark/jobs/train_spark_mllib_model.py
 
 # Tarda 4-6 minutos
-# Genera 7 modelos en /opt/spark/models (montado a ./models del host)
+# Sobrescribe los modelos en /opt/spark/models (montado a ./models del host)
 # Y registra el experimento en MLflow
 ```
 
@@ -447,6 +498,7 @@ Despliegue completo en Kubernetes. Cubre puntos 1-6 (todos los obligatorios
 punto 7).
 
 **Componentes que arranca este despliegue**:
+
 - MinIO (StatefulSet + 3 Services + bootstrap Job)
 - Kafka KRaft (StatefulSet + 3 Services + bootstrap Job)
 - Cassandra (StatefulSet + 2 Services + schema Job + load-distances Job)
@@ -468,11 +520,16 @@ docker compose stop
 docker ps --format 'table {{.Names}}\t{{.Status}}'
 ```
 
-### Paso 2: Construir imágenes propias (si no se hizo en Despliegue A)
+### Paso 2: Construir imágenes propias
+
+La imagen Spark incluye en su build el `flight_prediction.jar`, los
+modelos pre-entrenados y el dataset (necesario porque K8s no soporta bind
+mounts).
 
 ```bash
 cd ~/practica_big_data/deployment/docker
 
+# Si ya construiste en el Despliegue A, no es necesario rehacer
 docker compose build spark-master web
 
 # Verificar
@@ -548,9 +605,6 @@ docker run --rm --network host --entrypoint sh \
   "
 ```
 
-Si la carpeta `models/` está vacía (caso de despliegue limpio sin haber
-corrido entrenamiento), saltarse la línea de modelos. Se generarán después.
-
 ### Paso 7: Aplicar resto del stack
 
 ```bash
@@ -597,7 +651,7 @@ kubectl -n bigdata get jobs
 #   minio-bootstrap            Complete
 #   kafka-bootstrap            Complete
 #   cassandra-schema           Complete
-#   cassandra-load-distances   Complete  ← puede aparecer "Failed", ver paso 10
+#   cassandra-load-distances   Complete  -> puede aparecer "Failed", ver paso 10
 ```
 
 ### Paso 10: Relanzar cassandra-load-distances si falló
@@ -733,6 +787,7 @@ helm install kube-prometheus-stack \
 ```
 
 El fichero `values.yaml` personaliza la instalación para WSL2:
+
 - Alertmanager deshabilitado (no necesario en local)
 - Prometheus con 5GB de retención y recursos modestos
 - Grafana con 768Mi RAM (ajustado tras detectar OOM con 256Mi)
@@ -801,7 +856,8 @@ mostrar 8 paneles con datos:
 
 Además, los **dashboards default del chart** muestran el estado del cluster
 K8s entero. Especialmente útiles:
-- Kubernetes / Compute Resources / Namespace (Pods) → filtrar por `bigdata`
+
+- Kubernetes / Compute Resources / Namespace (Pods) -> filtrar por `bigdata`
 - Node Exporter / Nodes
 - Kubernetes / Persistent Volumes
 
@@ -826,6 +882,24 @@ kubectl delete namespace monitoring
 ---
 
 ## Decisiones técnicas relevantes
+
+### Sobre la inclusión de datasets y modelos en el repo
+
+Los datasets (`data/`), modelos pre-entrenados (`models/`) y JAR de
+streaming (`deployment/docker/spark/jobs/flight_prediction.jar`) están
+incluidos en el repositorio para garantizar reproducibilidad.
+
+
+Duplicación intencionada:
+
+- `data/simple_flight_delay_features.jsonl.bz2` (raíz) y
+  `deployment/docker/spark/simple_flight_delay_features.jsonl.bz2`
+  (build context Spark) son la misma cosa.
+- Similar para `models/` y `deployment/docker/spark/models_to_embed/`.
+
+La razón: el Dockerfile de Spark necesita los ficheros en el build
+context para empotrarlos en la imagen (porque K8s no soporta bind mounts).
+Mantenerlos también en raíz permite el bind mount de Docker Compose.
 
 ### Sobre Kubernetes
 
@@ -994,7 +1068,7 @@ Diagnóstico:
 kubectl -n bigdata describe pod <pod-name> | tail -20
 ```
 
-Si los eventos muestran `Pulling image "apache/kafka:4.2.0"` → solo
+Si los eventos muestran `Pulling image "apache/kafka:4.2.0"` -> solo
 esperar. Primera ejecución puede tardar 10 minutos.
 
 #### 8. Spark master: `NumberFormatException: For input string: "tcp://10.96.x.y:7077"`
@@ -1058,8 +1132,8 @@ kind: Service
 metadata:
   name: spark-master
   namespace: bigdata
-  labels:               # ← AÑADIR
-    app: spark-master   # ← AÑADIR
+  labels:               # AÑADIR
+    app: spark-master   # AÑADIR
 spec:
   ...
 ```
@@ -1141,7 +1215,7 @@ grafana:
       memory: 256Mi
     limits:
       cpu: 200m
-      memory: 768Mi    # ← antes 256Mi
+      memory: 768Mi    # antes 256Mi
 ```
 
 Y aplicar:
@@ -1186,8 +1260,8 @@ Grafana (suele ser literalmente `"prometheus"`).
 
 Causa B: nombre de métrica mal escrito en la query.
 
-Diagnóstico: ir a Grafana → Explore, escribir la query del panel y ver si
-devuelve datos. Si no, ajustar el nombre.
+Diagnóstico: ir a Grafana -> Explore, escribir la query del panel y ver
+si devuelve datos. Si no, ajustar el nombre.
 
 Atención especial: las métricas con guión (`-`) en el nombre, como
 `metrics_jvm_non-heap_used_Value`, pueden dar problemas. Algunos parsers
@@ -1215,8 +1289,8 @@ for t in data.get('data', {}).get('activeTargets', []):
 ```
 
 Causas típicas:
-- Endpoint `/metrics` no responde 200 → revisar configuración del servicio
-- Network policy bloqueando conexión → no aplicable en kind por defecto
+- Endpoint `/metrics` no responde 200 -> revisar configuración del servicio
+- Network policy bloqueando conexión -> no aplicable en kind por defecto
 - Path mal escrito en el ServiceMonitor
 
 ### Problemas generales
@@ -1266,10 +1340,22 @@ el manifest correspondiente.
 Causa: `-v` borra los volúmenes y la carpeta `./models` del host se
 mantiene pero los modelos generados en el volumen Spark sí se pierden.
 
-Solución: re-ejecutar el entrenamiento:
+Solución: los modelos pre-entrenados ya están en el repo. Si quieres
+regenerarlos, ejecutar el entrenamiento:
 ```bash
 docker compose exec spark-master spark-submit \
   /opt/spark/jobs/train_spark_mllib_model.py
+```
+
+#### 24. Página de Git diff que se queda en `:` (prompt del pager)
+
+Causa: `git diff --stat` con mucho output abre el pager `less`.
+
+Solución: pulsar `q` para salir. Si quieres evitar el pager:
+```bash
+git --no-pager diff --cached --stat
+# o configurar permanentemente:
+git config --global pager.diff false
 ```
 
 ---
@@ -1286,9 +1372,9 @@ docker compose exec spark-master spark-submit \
   cuando todos los servicios estén listos.
 - El stack Docker Compose y el cluster kind no pueden correr a la vez en
   WSL2 con 10 GB de RAM. Antes de arrancar uno, parar el otro.
-- Los datasets y modelos generados (`data/`, `models/`) no se commitean.
-  Para usar el repo desde cero hay que descargarlos (sección Instalación
-  de herramientas, Paso 5) o regenerarlos.
+- Los datasets (`data/`), modelos (`models/`) y JAR (`flight_prediction.jar`)
+  vienen incluidos en el repo para reproducibilidad. Si los modificas
+  manualmente, no usar `git clean` o se perderán.
 
 ---
 
