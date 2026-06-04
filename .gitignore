@@ -8,11 +8,12 @@ data/*.csv
 data/*.csv.bz2
 data/*.json
 data/*.jsonl
+!data/origin_dest_distances.jsonl
 data/*.jsonl.bz2
+!data/simple_flight_delay_features.jsonl.bz2
 data/*.parquet
-models/
-!models/.gitkeep
-*.bin
+# models/ contiene modelos entrenados (~200KB). Los commiteamos para reproducibilidad.
+# *.bin (los .bin de models/ se commitean para reproducibilidad)
 
 # --- Logs y outputs ---
 *.log
@@ -95,13 +96,13 @@ source_original/
 src/flight_prediction/target/
 src/flight_prediction/project/target/
 src/flight_prediction/project/project/
-deployment/docker/spark/jobs/*.jar
+# JAR de streaming: commiteado para reproducibilidad (es el job de prediccion)
 
 # Build de Scala / sbt
 src/flight_prediction/target/
 src/flight_prediction/project/target/
 src/flight_prediction/project/project/
-deployment/docker/spark/jobs/*.jar
+# JAR de streaming: commiteado para reproducibilidad (es el job de prediccion)
 
 # Airflow runtime (logs y plugins generados)
 deployment/airflow/logs/
@@ -109,8 +110,8 @@ deployment/airflow/plugins/*
 !deployment/airflow/plugins/.gitkeep
 
 # Archivos copiados al build context de Spark para K8s (no commitear)
-deployment/docker/spark/simple_flight_delay_features.jsonl.bz2
-deployment/docker/spark/models_to_embed/
+# simple_flight_delay_features.jsonl.bz2 empotrado para imagen K8s: commiteado
+# models_to_embed/ empotrados en imagen K8s: commiteados para reproducibilidad
 
 # Windows ADS metadata generado al copiar desde Downloads
 *:Zone.Identifier
