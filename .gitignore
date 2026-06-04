@@ -111,3 +111,6 @@ deployment/airflow/plugins/*
 # Archivos copiados al build context de Spark para K8s (no commitear)
 deployment/docker/spark/simple_flight_delay_features.jsonl.bz2
 deployment/docker/spark/models_to_embed/
+
+# Windows ADS metadata generado al copiar desde Downloads
+*:Zone.Identifier
