@@ -32,24 +32,6 @@ Basado en https://github.com/Big-Data-ETSIT/practica_creativa
 
 ---
 
-## Estado de cumplimiento
-
-| Punto | Descripción | Estado | Despliegue |
-|-------|-------------|--------|-----------|
-| 1 (obl) | Datos de entrenamiento en Iceberg sobre MinIO | Completado | Docker + K8s |
-| 2 (obl) | Distancias en Cassandra | Completado | Docker + K8s |
-| 3 (obl) | Predicciones por Kafka + WebSocket + sink Cassandra | Completado | Docker + K8s |
-| 4 (obl) | Training lee y escribe en el Lakehouse | Completado | Docker + K8s |
-| 5 (obl) | Despliegue Docker Compose | Completado | Docker |
-| 6 | Despliegue completo en Kubernetes | Completado | K8s (kind local) |
-| 7 | Airflow + MLflow integrados | Completado | Docker |
-| 9 | Observabilidad (Prometheus + Grafana) | Completado | K8s |
-| 8 | Despliegue en GCloud (GKE) | No abordado | -- |
-
-Estado final: **10/10** puntos asegurados. Todos los obligatorios + Kubernetes
-+ Airflow/MLflow + Observabilidad. El punto 8 (GKE) no se ha abordado porque
-la rúbrica completa al 10/10 ya se cubre con los puntos anteriores.
-
 ### Qué componentes corren en cada despliegue
 
 | Componente | Docker Compose | Kubernetes (kind) |
@@ -174,7 +156,7 @@ practica_big_data/
 
 ### Hardware mínimo recomendado
 
-- 16 GB RAM (10 GB asignados a WSL2)
+- 16 GB RAM (10 GB asignados a WSL2, si se trabaja con Windows)
 - 4 cores
 - 30 GB libres en disco
 
@@ -1361,5 +1343,3 @@ Basado en https://github.com/Big-Data-ETSIT/practica_creativa (plantilla
 docente ETSIT-UPM, derivada a su vez de
 https://github.com/rjurney/Agile_Data_Code_2).
 
-Modificaciones, infraestructura, manifiestos K8s, observabilidad y
-documentación: djfug, 2025-2026.
