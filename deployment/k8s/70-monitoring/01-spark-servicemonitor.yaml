@@ -1,0 +1,51 @@
+# ServiceMonitor: le dice a Prometheus que scrapee los endpoints /metrics/*/prometheus
+# de los Services 'spark-master' y 'spark-worker-ui' en el namespace 'bigdata'
+#
+# El Prometheus Operator vigila ServiceMonitors y reconfigura Prometheus solo.
+# Solo necesitamos que los pods tengan la label adecuada y un puerto nombrado.
+
+---
+# ServiceMonitor para Spark Master
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: spark-master
+  namespace: monitoring   # ServiceMonitor en el namespace de Prometheus
+  labels:
+    # El selector del Prometheus deployment por defecto incluye esta label
+    release: kube-prometheus-stack
+spec:
+  # Buscar Services en namespace 'bigdata' con la label 'app=spark-master'
+  namespaceSelector:
+    matchNames:
+      - bigdata
+  selector:
+    matchLabels:
+      app: spark-master
+  endpoints:
+    - port: ui                          # puerto nombrado en el Service (8080)
+      path: /metrics/master/prometheus/
+      interval: 30s
+      scrapeTimeout: 10s
+
+---
+# ServiceMonitor para Spark Worker
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: spark-worker
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - bigdata
+  selector:
+    matchLabels:
+      app: spark-worker
+  endpoints:
+    - port: ui                          # puerto nombrado en el Service (8081)
+      path: /metrics/prometheus/
+      interval: 30s
+      scrapeTimeout: 10s

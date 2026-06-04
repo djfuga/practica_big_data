@@ -114,3 +114,7 @@ deployment/docker/spark/models_to_embed/
 
 # Windows ADS metadata generado al copiar desde Downloads
 *:Zone.Identifier
+
+# Backups generados por edicion de manifests K8s
+*.yaml.bak
+*.Zone.Identifier

@@ -4,6 +4,8 @@ kind: Service
 metadata:
   name: spark-master
   namespace: bigdata
+  labels:
+    app: spark-master
 spec:
   type: ClusterIP
   selector:
@@ -23,6 +25,8 @@ kind: Service
 metadata:
   name: spark-master-ui
   namespace: bigdata
+  labels:
+    app: spark-master
 spec:
   type: NodePort
   selector:

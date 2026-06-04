@@ -4,6 +4,8 @@ kind: Service
 metadata:
   name: spark-worker-ui
   namespace: bigdata
+  labels:
+    app: spark-worker
 spec:
   type: NodePort
   selector:

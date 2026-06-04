@@ -1,0 +1,101 @@
+# Configuracion personalizada de kube-prometheus-stack para la practica
+# Objetivos:
+# - Modesto en recursos (WSL2 con RAM limitada)
+# - Grafana accesible via NodePort para usar desde el navegador del host
+# - Alertmanager deshabilitado (no lo necesitamos en local)
+# - Default dashboards de Kubernetes habilitados
+
+# --- Alertmanager: desactivado en local, no necesitamos notificaciones ---
+alertmanager:
+  enabled: false
+
+# --- Prometheus server ---
+prometheus:
+  prometheusSpec:
+    # Que descubra automaticamente ServiceMonitors de TODOS los namespaces
+    # (no solo del propio namespace 'monitoring')
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    # Retencion de 7 dias (suficiente para una practica)
+    retention: 7d
+    # Storage: 5Gi sobre el local-path-provisioner de kind
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+    # Recursos modestos
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+# --- Grafana: accesible via NodePort 30300 ---
+grafana:
+  enabled: true
+  adminPassword: bigdata2026
+  service:
+    type: NodePort
+    nodePort: 30300
+  # Dashboards por defecto del chart (K8s cluster, nodes, pods, etc.)
+  defaultDashboardsEnabled: true
+  # Recursos: aumentado a 768Mi tras OOM con 3 containers (grafana + 2 sidecars)
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 200m
+      memory: 768Mi
+  # Persistencia ligera para guardar los dashboards que crearemos manualmente
+  persistence:
+    enabled: true
+    size: 1Gi
+    accessModes: ["ReadWriteOnce"]
+
+# --- kube-state-metrics: deja default ---
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+# --- node-exporter: deja default ---
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# --- prometheus-operator: deja default ---
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# --- En kind algunos componentes de K8s no son scrapeables (kube-controller-manager
+#     y kube-scheduler corren en localhost del nodo). Los deshabilitamos para
+#     evitar errores en los dashboards default.
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+kubeEtcd:
+  enabled: false
