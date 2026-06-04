@@ -5,12 +5,6 @@ Iceberg Lakehouse, MLflow, Airflow, MinIO y Flask. Despliegue local (Docker
 Compose y Kubernetes con kind) con observabilidad integrada (Prometheus +
 Grafana).
 
-Autor: djfug · ETSIT UPM · 2025-2026
-
-Repositorio: https://github.com/djfuga/practica-bigdata-2026
-
-Basado en https://github.com/Big-Data-ETSIT/practica_creativa
-
 ---
 
 ## Tabla de contenidos
