@@ -56,6 +56,10 @@ COPY simple_flight_delay_features.jsonl.bz2 /opt/spark/data/simple_flight_delay_
 # 3.4 Modelos ML entrenados empotrados (MakePrediction.jar los lee de /opt/spark/models/)
 COPY models_to_embed/ /opt/spark/models/
 
-# 4. Usuario no-root
+# 4. Anyadir Spark al PATH para que `docker compose exec spark-master spark-submit ...`
+# funcione directamente sin tener que usar la ruta absoluta /opt/spark/bin/spark-submit
+ENV PATH="/opt/spark/bin:/opt/spark/sbin:${PATH}"
+
+# 5. Usuario no-root
 USER spark
 WORKDIR /opt/spark
