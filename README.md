@@ -425,8 +425,7 @@ docker compose exec spark-master spark-submit \
   /opt/spark/jobs/train_spark_mllib_model.py
 ```
 
-Tarda 4-6 minutos. Sobrescribe los modelos en `/opt/spark/models` (montado
-a `./models` del host) y registra el experimento en MLflow.
+Tarda 4-6 minutos. Es necesario vaciar la carpeta antes en caso de reentreno para evitar problemas de permisos, además de asegurar que haya permisos de escritura.
 
 ### Paso 6: Lanzar el job de predicción streaming (puntos 3 y 4)
 
@@ -790,67 +789,6 @@ curl -s -X POST http://admin:bigdata2026@localhost:30002/api/dashboards/db \
 URL: http://localhost:30002 — Credecenciales: admin / bigdata2026
 
 Navegar a Dashboards y abrir **Spark - Practica BigData 2026**.
-
----
-
-## Decisiones técnicas relevantes
-
-### Sobre la inclusión de datasets y modelos en el repo
-
-Los datasets (`data/`), modelos pre-entrenados (`models/`) y JAR de
-streaming están incluidos en el repositorio para garantizar reproducibilidad.
-
-### Sobre Kubernetes
-
-1. **`enableServiceLinks: false`** en todos los pods de Spark y Web. K8s
-   inyecta env vars automáticas que colisionan con variables Spark nativas.
-
-2. **`spark.driver.host=$POD_IP`** + `bindAddress=0.0.0.0` + puertos fijos
-   (40000/40001) en todos los `spark-submit`.
-
-3. **Datos, scripts y modelos dentro de la imagen Spark** (no bind mount).
-   K8s no soporta bind mounts.
-
-4. **Sondas TCP en lugar de exec con JVM cliente** para Kafka readiness.
-
-5. **StatefulSet + headless Service** para servicios con identidad
-   persistente.
-
-6. **Streaming como Deployment de larga duración**, no Job.
-
-7. **Labels explícitas en los Services** para que los ServiceMonitor de
-   Prometheus las encuentren.
-
-### Sobre el Dockerfile de Spark
-
-`ENV PATH="/opt/spark/bin:/opt/spark/sbin:${PATH}"` se incluye explícitamente
-en el Dockerfile para que `docker compose exec spark-master spark-submit ...`
-funcione directamente. Sin este `ENV`, `docker exec` no carga el `.bashrc`
-y `spark-submit` no se encuentra.
-
-### Sobre el `user` de Airflow
-
-Los servicios `airflow-webserver` y `airflow-scheduler` usan `user: "50000:0"`
-(UID airflow + GID root). El GID 0 es **necesario** para que Airflow pueda
-escribir en `/opt/airflow/logs/`. El acceso al socket Docker (necesario para
-que los DAGs invoquen `docker exec`) se garantiza vía `group_add: ["108"]`
-(GID secundario), no vía GID primario.
-
-### Sobre el comando `mc` para subir a MinIO
-
-Usamos:
-- Variable `MC_HOST_local` en lugar de `mc alias set` (no requiere
-  configuración persistente, funciona en contenedores efímeros).
-- `mc mirror` para los modelos en lugar de `mc cp --recursive` (es
-  idempotente y maneja mejor reintentos).
-- `--entrypoint sh` porque la imagen `mc` reciente cambió su entrypoint.
-
-### Sobre Observabilidad
-
-1. **Sink PrometheusServlet nativo de Spark** en lugar de exporters externos.
-2. **Dashboard custom** con queries que coinciden con las métricas reales.
-3. **Grafana via NodePort** (30002) en vez de port-forward.
-4. **Recursos Grafana ajustados** a 768Mi tras detectar OOM con 256Mi.
 
 ---
 
