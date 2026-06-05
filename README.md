@@ -1127,7 +1127,10 @@ Solución: cerrar sesión WSL2 (`wsl --shutdown` desde PowerShell) y reabrir.
 docker compose down       # NO uses -v (mantiene los datos)
 docker compose up -d      # respeta el orden correcto
 ```
-
+#### 32. En caso de tener varios problemas con los permisos
+```bash
+docker run --rm -v ~/practica_big_data:/target alpine chmod -R 777 /target
+```
 ---
 
 ## Limitaciones conocidas
