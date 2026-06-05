@@ -5,12 +5,6 @@ Iceberg Lakehouse, MLflow, Airflow, MinIO y Flask. Despliegue local (Docker
 Compose y Kubernetes con kind) con observabilidad integrada (Prometheus +
 Grafana).
 
-Autor: djfug · ETSIT UPM · 2025-2026
-
-Repositorio: https://github.com/djfuga/practica-bigdata-2026
-
-Basado en https://github.com/Big-Data-ETSIT/practica_creativa
-
 ---
 
 ## Tabla de contenidos
@@ -29,26 +23,8 @@ Basado en https://github.com/Big-Data-ETSIT/practica_creativa
 12. [Troubleshooting completo](#troubleshooting-completo)
 13. [Limitaciones conocidas](#limitaciones-conocidas)
 14. [Comandos de cierre](#comandos-de-cierre)
-15. [Licencia y autoría](#licencia-y-autoría)
 
 ---
-
-## Estado de cumplimiento
-
-| Punto | Descripción | Estado | Despliegue |
-|-------|-------------|--------|-----------|
-| 1 (obl) | Datos de entrenamiento en Iceberg sobre MinIO | Completado | Docker + K8s |
-| 2 (obl) | Distancias en Cassandra | Completado | Docker + K8s |
-| 3 (obl) | Predicciones por Kafka + WebSocket + sink Cassandra | Completado | Docker + K8s |
-| 4 (obl) | Training lee y escribe en el Lakehouse | Completado | Docker + K8s |
-| 5 (obl) | Despliegue Docker Compose | Completado | Docker |
-| 6 | Despliegue completo en Kubernetes | Completado | K8s (kind local) |
-| 7 | Airflow + MLflow integrados | Completado | Docker |
-| 9 | Observabilidad (Prometheus + Grafana) | Completado | K8s |
-| 8 | Despliegue en GCloud (GKE) | No abordado | -- |
-
-Estado final: **10/10** puntos asegurados.
-
 ### Qué componentes corren en cada despliegue
 
 | Componente | Docker Compose | Kubernetes (kind) |
@@ -1167,12 +1143,3 @@ docker network prune -f
 ```
 
 ---
-
-## Licencia y autoría
-
-Basado en https://github.com/Big-Data-ETSIT/practica_creativa (plantilla
-docente ETSIT-UPM, derivada a su vez de
-https://github.com/rjurney/Agile_Data_Code_2).
-
-Modificaciones, infraestructura, manifiestos K8s, observabilidad y
-documentación: djfug, 2025-2026.
