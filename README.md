@@ -224,7 +224,7 @@ hace falta descargar nada extra.
 
 ```bash
 cd ~
-git clone https://github.com/djfuga/practica-bigdata-2026.git practica_big_data
+git clone https://github.com/djfuga/practica_big_data.git practica_big_data
 cd practica_big_data
 ```
 
