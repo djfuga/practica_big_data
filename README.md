@@ -488,9 +488,14 @@ docker compose exec airflow-scheduler airflow dags unpause cleanup_old_predictio
 # Disparar manualmente (opcional)
 docker compose exec airflow-scheduler airflow dags trigger cleanup_old_predictions
 ```
-
-> **Si Airflow no responde (HTTP 000) tras `compose up -d`:**
+> **Si Airflow no devuelve Healthy y se queda en health:starting o restarting:**
+> Ejecutar:
+> ```bash
+> docker compose down
+> docker compose up -d
+> ```
 >
+> **Si Airflow no responde (HTTP 000) tras `compose up -d`:**
 > Verifica los logs:
 > ```bash
 > docker compose logs airflow-webserver --tail 30
