@@ -9,22 +9,22 @@ Grafana).
 
 ## Tabla de contenidos
 
-1. [Estado de cumplimiento](#estado-de-cumplimiento)
-2. [Arquitectura](#arquitectura)
-3. [Componentes y versiones](#componentes-y-versiones)
-4. [Estructura del repositorio](#estructura-del-repositorio)
-5. [Prerrequisitos del sistema](#prerrequisitos-del-sistema)
-6. [Instalación de herramientas](#instalación-de-herramientas)
-7. [Permisos y preparación previa](#permisos-y-preparación-previa)
-8. [Despliegue A: Docker Compose](#despliegue-a-docker-compose-puntos-obligatorios--airflowmlflow)
-9. [Despliegue B: Kubernetes local con kind](#despliegue-b-kubernetes-local-con-kind)
-10. [Despliegue C: Observabilidad](#despliegue-c-observabilidad-prometheus--grafana-en-k8s)
-11. [Decisiones técnicas relevantes](#decisiones-técnicas-relevantes)
-12. [Troubleshooting completo](#troubleshooting-completo)
-13. [Limitaciones conocidas](#limitaciones-conocidas)
-14. [Comandos de cierre](#comandos-de-cierre)
+1. [Arquitectura](#arquitectura)
+2. [Componentes y versiones](#componentes-y-versiones)
+3. [Estructura del repositorio](#estructura-del-repositorio)
+4. [Prerrequisitos del sistema](#prerrequisitos-del-sistema)
+5. [Instalación de herramientas](#instalación-de-herramientas)
+6. [Permisos y preparación previa](#permisos-y-preparación-previa)
+7. [Despliegue A: Docker Compose](#despliegue-a-docker-compose-puntos-obligatorios--airflowmlflow)
+8. [Despliegue B: Kubernetes local con kind](#despliegue-b-kubernetes-local-con-kind)
+9. [Despliegue C: Observabilidad](#despliegue-c-observabilidad-prometheus--grafana-en-k8s)
+10. [Decisiones técnicas relevantes](#decisiones-técnicas-relevantes)
+11. [Troubleshooting completo](#troubleshooting-completo)
+12. [Limitaciones conocidas](#limitaciones-conocidas)
+13. [Comandos de cierre](#comandos-de-cierre)
 
 ---
+
 ### Qué componentes corren en cada despliegue
 
 | Componente | Docker Compose | Kubernetes (kind) |
@@ -182,15 +182,15 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io \
 sudo usermod -aG docker $USER
 ```
 
-Tras `sudo usermod -aG docker`, hay que **reiniciar la sesión** para que el
-grupo `docker` se active. En WSL2:
+Tras `sudo usermod -aG docker`, **reinicia la sesión WSL2** para que el grupo
+`docker` se active:
 
 ```powershell
-# Desde PowerShell
+# Desde PowerShell de Windows
 wsl --shutdown
 ```
 
-Luego reabre la distribución WSL2.
+Reabre la distribución WSL2 después.
 
 ### Paso 2: kubectl
 
@@ -253,8 +253,7 @@ de logs.
 ### Permisos para Airflow
 
 Airflow corre como usuario `airflow` (UID 50000) y necesita escribir en las
-carpetas de logs y procesador de DAGs. Tras clonar el repo, estas carpetas
-no existen (están en `.gitignore`) y hay que crearlas con permisos amplios:
+carpetas de logs y procesador de DAGs:
 
 ```bash
 cd ~/practica_big_data/deployment
@@ -271,26 +270,25 @@ sudo chmod -R 755 airflow/dags/
 sudo chmod -R 755 airflow/plugins/
 sudo chmod -R 755 airflow/config/
 
-# Verificar
 ls -la airflow/
 ```
 
-Si te saltas este paso, verás errores tipo `PermissionError: '/opt/airflow/logs/scheduler'`
+Si te saltas este paso, verás errores `PermissionError: '/opt/airflow/logs/scheduler'`
 en los logs de Airflow y el webserver no responderá (HTTP 000).
 
 ### Permisos en la red Docker
 
-Docker creará una red `bigdata-net` al levantar el stack. Si te aparece
-`Pool overlaps with other one on this address space`, limpia redes huérfanas:
+Si te aparece `Pool overlaps with other one on this address space`:
 
 ```bash
 docker network prune -f
 ```
 
-### Permisos para los datasets (lectura)
+### Permisos para los datasets
 
 Los datasets se montan en read-only (`:ro`) en los contenedores. Los
-permisos por defecto del clone (644) son suficientes. Pero verifica:
+permisos por defecto del clone (644 para archivos, 755 para directorios)
+son los correctos:
 
 ```bash
 cd ~/practica_big_data
@@ -298,22 +296,12 @@ ls -la data/
 # Debe mostrar -rw-r--r-- para los dos ficheros
 ```
 
-Si por algún motivo los permisos son más restrictivos (p.ej. 600), arregla:
+Si tras algún cambio los permisos son más restrictivos, restablece:
 
 ```bash
+cd ~/practica_big_data
+chmod 755 data/ models/
 chmod 644 data/*
-```
-
-### Permisos especiales para Kubernetes
-
-Cuando subimos los datasets a MinIO en Kubernetes (Paso 6 del Despliegue B),
-el contenedor `minio/mc` lee de un bind mount `data/` del host. Si los
-permisos del host son restrictivos, falla. Asegúralo con:
-
-```bash
-chmod 755 data/
-chmod 644 data/*
-chmod 755 models/
 find models/ -type d -exec chmod 755 {} \;
 find models/ -type f -exec chmod 644 {} \;
 ```
@@ -360,14 +348,15 @@ docker compose ps
 ```
 
 > **IMPORTANTE: SIEMPRE usa `docker compose up -d`, NO `docker compose start`.**
-> 
+>
 > El comando `start` reutiliza contenedores existentes pero **NO respeta
 > los `depends_on: condition: service_healthy`**. Esto causa que Web, MLflow
 > y Airflow arranquen ANTES que Kafka/Postgres estén Ready y queden en
 > `Restarting` o `unhealthy`.
-> 
-> Si tienes que parar el stack: `docker compose stop`.
-> Para retomarlo: `docker compose down` (sin `-v`, mantiene volúmenes) + `docker compose up -d`.
+>
+> Para parar: `docker compose stop` o `docker compose down`.
+> Para retomar: SIEMPRE `docker compose down` (sin `-v`, mantiene volúmenes) +
+> `docker compose up -d`. NO uses `start`.
 
 Todos los servicios deben estar `(healthy)` o `Up`. `bigdata-airflow-init`
 saldrá como `Exited (0)` — es correcto, es un Job de un solo uso.
@@ -393,11 +382,7 @@ INGESTA ICEBERG: OK
 
 El contenedor `cassandra-init` solo crea las tablas vacías. La carga de las
 4696 distancias origen-destino se hace con un script Python aparte
-(`src/scripts/load_distances_cassandra.py`) que necesita el driver
-`cassandra-driver` instalado.
-
-Levantamos un contenedor Python efímero, instalamos el driver y ejecutamos
-el script en una sola operación:
+(`src/scripts/load_distances_cassandra.py`):
 
 ```bash
 cd ~/practica_big_data
@@ -420,7 +405,7 @@ Tarda unos 2 minutos. Salida esperada al final:
 CARGA DISTANCIAS CASSANDRA: OK
 ```
 
-Verificación adicional con cqlsh:
+Verificación adicional:
 
 ```bash
 cd ~/practica_big_data/deployment/docker
@@ -505,12 +490,12 @@ docker compose exec airflow-scheduler airflow dags trigger cleanup_old_predictio
 ```
 
 > **Si Airflow no responde (HTTP 000) tras `compose up -d`:**
-> 
+>
 > Verifica los logs:
 > ```bash
 > docker compose logs airflow-webserver --tail 30
 > ```
-> 
+>
 > Si ves "You need to initialize the database", ejecuta la migración manualmente:
 > ```bash
 > docker compose stop airflow-webserver airflow-scheduler
@@ -521,10 +506,10 @@ docker compose exec airflow-scheduler airflow dags trigger cleanup_old_predictio
 >   --role Admin --email admin@example.com
 > docker compose up -d airflow-webserver airflow-scheduler
 > ```
-> 
+>
 > Esto puede pasar si el contenedor `airflow-init` falló silenciosamente en
 > el primer arranque (los permisos de logs no estaban bien). Ver
-> [Troubleshooting #5](#troubleshooting-completo) para detalles.
+> [Troubleshooting #3](#troubleshooting-completo) para detalles.
 
 ### Paso 10: Parar el stack
 
@@ -550,12 +535,19 @@ con 10 GB RAM. Antes de arrancar kind, parar Docker Compose:
 
 ```bash
 cd ~/practica_big_data/deployment/docker
-docker compose stop
+docker compose down
 ```
+
+> Si la RAM de tu WSL2 queda alta tras parar Docker (por el bug conocido
+> de WSL2 que retiene páginas), reinicia WSL desde PowerShell:
+> ```powershell
+> wsl --shutdown
+> ```
+> Y reabre la distribución.
 
 ### Paso 1: Verificar permisos
 
-Antes de arrancar K8s, asegúrate que los permisos de datos son correctos
+Antes de arrancar K8s, asegúrate de que los permisos de datos son correctos
 (ver sección [Permisos](#permisos-y-preparación-previa)):
 
 ```bash
@@ -603,56 +595,47 @@ kubectl -n bigdata wait --for=condition=complete job/minio-bootstrap --timeout=1
 
 ### Paso 6: Subir datasets y modelos a MinIO
 
-Este paso es donde los compañeros suelen tener más problemas. Atención
-especial a los permisos de las carpetas `data/` y `models/` (ver sección
-[Permisos especiales para Kubernetes](#permisos-especiales-para-kubernetes)).
-
 ```bash
 cd ~/practica_big_data
 
-# Verificar que las rutas y permisos son correctos antes de empezar
-ls -la data/
-ls -la models/
-
-# Subir todo a MinIO usando mc en un contenedor ad-hoc
-docker run --rm --network host \
+docker run --rm --network host --entrypoint sh \
+  -e MC_HOST_local="http://minioadmin:minioadmin123@localhost:30091" \
   -v "$(pwd)/data:/data:ro" \
   -v "$(pwd)/models:/models:ro" \
-  --entrypoint sh \
-  minio/mc:RELEASE.2025-04-03T17-07-56Z \
-  -c "
-    mc alias set local http://localhost:30091 minioadmin minioadmin123 >/dev/null
-    mc mb --ignore-existing local/lakehouse
-    mc cp /data/origin_dest_distances.jsonl       local/lakehouse/raw/
-    mc cp /data/simple_flight_delay_features.jsonl.bz2 local/lakehouse/raw/
-    mc cp --recursive /models/                    local/lakehouse/models/
-    echo '=== Subida completada ==='
-    mc ls --recursive local/lakehouse/ | head -20
+  minio/mc:RELEASE.2025-04-08T15-39-49Z \
+  -c " \
+    mc cp /data/origin_dest_distances.jsonl       local/lakehouse/raw/ && \
+    mc cp /data/simple_flight_delay_features.jsonl.bz2 local/lakehouse/raw/ && \
+    mc mirror /models/                            local/lakehouse/models/ \
   "
 ```
 
-**Si falla con "permission denied"**, los archivos del host no son
-legibles por el contenedor `mc`. Ejecuta:
+**Si falla con "Bucket not found"** (raro, el bootstrap del Paso 5 lo crea),
+puedes crearlo a mano antes:
+
+```bash
+docker run --rm --network host --entrypoint sh \
+  -e MC_HOST_local="http://minioadmin:minioadmin123@localhost:30091" \
+  minio/mc:RELEASE.2025-04-08T15-39-49Z \
+  -c "mc mb --ignore-existing local/lakehouse"
+```
+
+**Si falla con "permission denied"** al leer del bind mount, restaura
+permisos:
 
 ```bash
 cd ~/practica_big_data
 chmod -R a+rX data/ models/
 ```
 
-Y vuelve a ejecutar el `docker run` anterior.
-
-**Si falla con "Connection refused" en `localhost:30091`**, MinIO no está
-listo. Espera y verifica:
+**Si falla con "Connection refused"** en `localhost:30091`, MinIO no está
+listo aún:
 
 ```bash
 kubectl -n bigdata wait --for=condition=ready pod/minio-0 --timeout=300s
-kubectl -n bigdata get svc minio
 curl -s http://localhost:30091/minio/health/live -o /dev/null -w "%{http_code}\n"
 # Debe devolver 200
 ```
-
-**Si falla con "mc: command not found"**, la imagen de mc cambió su
-entrypoint. Usa `--entrypoint sh` como en el comando anterior (ya está).
 
 ### Paso 7: Aplicar resto del stack
 
@@ -677,31 +660,37 @@ kubectl -n bigdata wait --for=condition=available deployment/spark-worker --time
 
 ### Paso 8: Reiniciar Web Flask
 
+El web suele arrancar antes que Kafka esté completamente Ready y queda en
+`CrashLoopBackOff`. Restart resuelve:
+
 ```bash
 kubectl -n bigdata rollout restart deployment/web
 kubectl -n bigdata wait --for=condition=available deployment/web --timeout=120s
 
-curl -s http://localhost:30050/health
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:30050/health
+# Debe devolver 200
 ```
 
 ### Paso 9: Relanzar `cassandra-load-distances` si falló
 
+El Job puede fallar si Cassandra no estaba 100% Ready cuando se lanzó.
+Verifica:
+
 ```bash
-# Verificar
 kubectl -n bigdata get jobs
 
-# Solo si "Failed":
+# Si "cassandra-load-distances" aparece como "Failed":
 kubectl -n bigdata delete job cassandra-load-distances
 kubectl apply -f 30-cassandra/04-load-distances-job.yaml
-kubectl -n bigdata wait --for=condition=complete job/cassandra-load-distances --timeout=180s
+kubectl -n bigdata wait --for=condition=complete job/cassandra-load-distances --timeout=300s
 ```
 
 Verificación:
 
 ```bash
-kubectl -n bigdata run cassandra-verify --rm -i --restart=Never \
-  --image=cassandra:5.0 -- \
-  cqlsh cassandra -e "SELECT COUNT(*) FROM flight_db.origin_dest_distances;"
+kubectl -n bigdata exec cassandra-0 -- cqlsh -e \
+  "SELECT COUNT(*) FROM flight_db.origin_dest_distances;"
+# Debe devolver 4696
 ```
 
 ### Paso 10: Ingesta Iceberg
@@ -709,11 +698,15 @@ kubectl -n bigdata run cassandra-verify --rm -i --restart=Never \
 ```bash
 cd ~/practica_big_data/deployment/k8s
 
-# Escalar streaming a 0 (libera cores)
-kubectl -n bigdata scale deployment/spark-streaming --replicas=0 2>/dev/null
+# Escalar streaming a 0 si ya existiera (libera cores)
+kubectl -n bigdata scale deployment/spark-streaming --replicas=0 2>/dev/null || true
 
 kubectl apply -f 50-spark/05-ingest-job.yaml
-kubectl -n bigdata wait --for=condition=complete job/iceberg-ingest --timeout=300s
+kubectl -n bigdata wait --for=condition=complete job/iceberg-ingest --timeout=600s
+
+# Ver logs
+kubectl -n bigdata logs job/iceberg-ingest --tail 10
+# Debe terminar con: INGESTA ICEBERG: OK
 ```
 
 ### Paso 11: Lanzar streaming
@@ -789,7 +782,7 @@ curl -s -X POST http://admin:bigdata2026@localhost:30002/api/dashboards/db \
 
 ### Paso 4: Acceder a Grafana
 
-URL: http://localhost:30002 — admin / bigdata2026
+URL: http://localhost:30002 — Credecenciales: admin / bigdata2026
 
 Navegar a Dashboards y abrir **Spark - Practica BigData 2026**.
 
@@ -800,8 +793,7 @@ Navegar a Dashboards y abrir **Spark - Practica BigData 2026**.
 ### Sobre la inclusión de datasets y modelos en el repo
 
 Los datasets (`data/`), modelos pre-entrenados (`models/`) y JAR de
-streaming (`deployment/docker/spark/jobs/flight_prediction.jar`) están
-incluidos en el repositorio para garantizar reproducibilidad.
+streaming están incluidos en el repositorio para garantizar reproducibilidad.
 
 ### Sobre Kubernetes
 
@@ -838,6 +830,15 @@ Los servicios `airflow-webserver` y `airflow-scheduler` usan `user: "50000:0"`
 escribir en `/opt/airflow/logs/`. El acceso al socket Docker (necesario para
 que los DAGs invoquen `docker exec`) se garantiza vía `group_add: ["108"]`
 (GID secundario), no vía GID primario.
+
+### Sobre el comando `mc` para subir a MinIO
+
+Usamos:
+- Variable `MC_HOST_local` en lugar de `mc alias set` (no requiere
+  configuración persistente, funciona en contenedores efímeros).
+- `mc mirror` para los modelos en lugar de `mc cp --recursive` (es
+  idempotente y maneja mejor reintentos).
+- `--entrypoint sh` porque la imagen `mc` reciente cambió su entrypoint.
 
 ### Sobre Observabilidad
 
@@ -957,7 +958,6 @@ el contenedor `mc` (UID distinto).
 cd ~/practica_big_data
 chmod -R a+rX data/ models/
 ls -la data/ models/
-# Verificar que el modo es 755 (carpetas) y 644 (archivos)
 ```
 
 Y reintentar el `docker run` con `minio/mc`.
@@ -972,44 +972,57 @@ kubectl -n bigdata get svc minio
 curl -s http://localhost:30091/minio/health/live -o /dev/null -w "%{http_code}\n"
 ```
 
-#### 11. Pods en `ContainerCreating` mucho tiempo
+#### 11. Paso 6 falla con "Bucket lakehouse not found"
+
+El bootstrap del Paso 5 no se ejecutó o falló. Crea el bucket manualmente:
+
+```bash
+docker run --rm --network host --entrypoint sh \
+  -e MC_HOST_local="http://minioadmin:minioadmin123@localhost:30091" \
+  minio/mc:RELEASE.2025-04-08T15-39-49Z \
+  -c "mc mb --ignore-existing local/lakehouse"
+```
+
+Luego reintentar el comando del Paso 6.
+
+#### 12. Pods en `ContainerCreating` mucho tiempo
 
 Causa: descarga lenta de imágenes oficiales. Esperar.
 
-#### 12. Spark master: `NumberFormatException: For input string: "tcp://..."`
+#### 13. Spark master: `NumberFormatException: For input string: "tcp://..."`
 
 Solución: el manifest debe tener `enableServiceLinks: false`.
 
-#### 13. Spark job: `Initial job has not accepted any resources`
+#### 14. Spark job: `Initial job has not accepted any resources`
 
 Solución: usar `spark.driver.host=$POD_IP`.
 
-#### 14. Pod streaming: `Failed to load class ...`
+#### 15. Pod streaming: `Failed to load class ...`
 
 El nombre correcto es `es.upm.dit.ging.predictor.MakePrediction`.
 
-#### 15. ServiceMonitor no descubre targets
+#### 16. ServiceMonitor no descubre targets
 
 Causa: el Service no tiene `metadata.labels`. Añadirlas.
 
-#### 16. Kafka readiness probe timeout
+#### 17. Kafka readiness probe timeout
 
 Cambiar a `tcpSocket: { port: 9092 }`.
 
-#### 17. Web pod en `CrashLoopBackOff` con `NoBrokersAvailable`
+#### 18. Web pod en `CrashLoopBackOff` con `NoBrokersAvailable`
 
 ```bash
 kubectl -n bigdata rollout restart deployment/web
 ```
 
-#### 18. `cassandra-load-distances` Job en estado `Failed`
+#### 19. `cassandra-load-distances` Job en estado `Failed`
 
 ```bash
 kubectl -n bigdata delete job cassandra-load-distances
 kubectl apply -f deployment/k8s/30-cassandra/04-load-distances-job.yaml
 ```
 
-#### 19. Iceberg ingest atascado
+#### 20. Iceberg ingest atascado
 
 ```bash
 kubectl -n bigdata scale deployment/spark-streaming --replicas=0
@@ -1019,7 +1032,7 @@ kubectl apply -f deployment/k8s/50-spark/05-ingest-job.yaml
 
 ### Problemas con Observabilidad
 
-#### 20. Grafana en `CrashLoopBackOff` (OOM)
+#### 21. Grafana en `CrashLoopBackOff` (OOM)
 
 Aumentar memoria en `values.yaml`:
 ```yaml
@@ -1034,17 +1047,17 @@ Y aplicar:
 helm upgrade kube-prometheus-stack ... --values values.yaml --reuse-values
 ```
 
-#### 21. `kubectl port-forward` se cae
+#### 22. `kubectl port-forward` se cae
 
 Usar NodePort. Grafana ya está en 30002.
 
-#### 22. Dashboard Grafana con paneles "No data"
+#### 23. Dashboard Grafana con paneles "No data"
 
 Verificar el UID del datasource en /api/datasources.
 
 ### Problemas generales
 
-#### 23. WSL2 se queda sin RAM
+#### 24. WSL2 se queda sin RAM
 
 En `%USERPROFILE%\.wslconfig`:
 ```ini
@@ -1053,19 +1066,31 @@ memory=12GB
 processors=8
 ```
 
-#### 24. `helm install` falla con timeout
+#### 25. WSL2 retiene memoria tras parar Docker
+
+WSL2 tiene un bug conocido donde el kernel no libera páginas físicas
+después de que los procesos terminen. La única solución fiable es reiniciar
+WSL desde PowerShell:
+
+```powershell
+wsl --shutdown
+```
+
+Y reabrir.
+
+#### 26. `helm install` falla con timeout
 
 ```bash
 helm install ... --timeout 15m
 ```
 
-#### 25. Puertos del host ocupados
+#### 27. Puertos del host ocupados
 
 ```bash
 sudo lsof -i :5001
 ```
 
-#### 26. Modelos perdidos tras `docker compose down -v`
+#### 28. Modelos perdidos tras `docker compose down -v`
 
 Los modelos pre-entrenados ya están en el repo. Si los regeneras:
 
@@ -1074,20 +1099,20 @@ docker compose exec spark-master spark-submit \
   /opt/spark/jobs/train_spark_mllib_model.py
 ```
 
-#### 27. Pager `less` se queda en `:` con git diff
+#### 29. Pager `less` se queda en `:` con git diff
 
 Pulsar `q` para salir. Para desactivar:
 ```bash
 git config --global pager.diff false
 ```
 
-#### 28. Permission denied al ejecutar `docker` tras instalación
+#### 30. Permission denied al ejecutar `docker` tras instalación
 
 Causa: el grupo `docker` no está activo en la sesión.
 
 Solución: cerrar sesión WSL2 (`wsl --shutdown` desde PowerShell) y reabrir.
 
-#### 29. Tras `docker compose stop` largo, los servicios no arrancan bien
+#### 31. Tras `docker compose stop` largo, los servicios no arrancan bien
 
 **Causa**: `docker compose start` no respeta los healthchecks de `depends_on`.
 
@@ -1107,12 +1132,15 @@ docker compose up -d      # respeta el orden correcto
 - La imagen Iceberg REST en kind no persiste su catálogo entre
   recreaciones del cluster.
 - El cliente Kafka de Python en Web puede crashear si arranca antes que
-  Kafka (mitigado con `depends_on: condition: service_healthy`).
+  Kafka. Se mitiga con `rollout restart` tras el primer despliegue.
 - Docker Compose y kind no pueden correr a la vez en WSL2 con 10 GB.
 - El contenedor `airflow-init` no usa `set -e`, así que puede salir con
   código 0 incluso si hubo errores intermedios. Si Airflow no arranca tras
   `docker compose up -d`, ejecutar `db migrate` manualmente (ver
   Troubleshooting #3).
+- WSL2 retiene memoria del kernel tras parar Docker. Reiniciar con
+  `wsl --shutdown` desde PowerShell entre sesiones largas (ver
+  Troubleshooting #25).
 
 ---
 
